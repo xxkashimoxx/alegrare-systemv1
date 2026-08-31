@@ -1,0 +1,73 @@
+one) {
+  return `<button class="metric-card ${tone}" data-route="${label.includes('Oportunidades') ? 'opportunities' : label.includes('recuperar') ? 'recovery' : label.includes('Consultas') ? 'agenda' : 'financial'}"><span class="metric-icon">${icon(ico)}</span><span class="metric-content"><small>${label}</small><strong>${value}</strong><span>${note}</span></span>${icon('chevron',16)}</button>`;
+}
+
+function opportunityBars() {
+  const groups = {};
+  openOpportunities().forEach(o => groups[o.category] = (groups[o.category] || 0) + o.value);
+  const max = Math.max(...Object.values(groups), 1);
+  return `<div class="bar-list">${Object.entries(groups).sort((a,b)=>b[1]-a[1]).map(([label,value]) => `<div class="bar-item"><div><span>${label}</span><b>${money(value)}</b></div><div class="bar-track"><i style="width:${Math.max(8, value/max*100)}%"></i></div></div>`).join('')}</div>`;
+}
+
+function opportunitiesPage() {
+  const categories = ['Todas', ...new Set(state.opportunities.map(o=>o.category))];
+  const rows = openOpportunities().filter(o => opportunityFilter === 'Todas' || o.category === opportunityFilter).sort((a,b)=> (a.priority === 'Alta' ? -1 : 1) || b.value-a.value);
+  return `
+    ${pageHead('Central de Oportunidades','O sistema cruza comportamento, retorno e tratamento para mostrar onde agir primeiro.', `<button class="btn primary" data-route="recovery">Abrir recuperação</button>`)}
+    <section class="metric-grid compact">
+      ${miniMetric('Oportunidades abertas', openOpportunities().length)}
+      ${miniMetric('Potencial estimado', money(totalPotential()))}
+      ${miniMetric('Alta prioridade', highPriority().length)}
+      ${miniMetric('Em contato', openOpportunities().filter(o=>o.status==='Em contato').length)}
+    </section>
+    <section class="panel opportunity-panel">
+      <div class="panel-head stack-mobile"><div><span class="eyebrow">PRIORIZAÇÃO AUTOMÁTICA</span><h2>Pacientes com oportunidade identificada</h2><p>Ordenados por risco, momento e valor potencial.</p></div></div>
+      <div class="filter-chips">${categories.map(c=>`<button class="chip ${opportunityFilter===c?'active':''}" data-opportunity-filter="${escapeAttr(c)}">${c}</button>`).join('')}</div>
+      <div class="data-table opportunity-table">
+        <div class="table-head"><span>Paciente</span><span>Motivo</span><span>Prioridade</span><span>Potencial</span><span>Próxima ação</span><span></span></div>
+        ${rows.map(o => {
+          const p = patientById(o.patientId);
+          return `<div class="table-row"><button class="patient-cell" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.name)}</span><span><b>${p.name}</b><small>${p.plan} · ${p.lastVisitDays} dias sem visita</small></span></button><span>${o.category}</span><span><i class="priority-badge ${o.priority.toLowerCase()}">${o.priority}</i></span><span><b>${money(o.value)}</b></span><span class="next-action">${o.nextAction}</span><span class="row-actions"><button class="icon-action" data-action="open-opportunity" data-id="${o.id}" title="Abrir">${icon('chevron',16)}</button><button class="btn tiny" data-action="start-recovery" data-id="${o.id}">${o.status==='Em contato'?'Continuar':'Recuperar'}</button></span></div>`;
+        }).join('')}
+      </div>
+    </section>`;
+}
+
+function patientsPage() {
+  const query = searchTerm.trim().toLowerCase();
+  const patients = state.patients.filter(p => !query || p.name.toLowerCase().includes(query) || p.treatment.toLowerCase().includes(query) || p.tags.join(' ').toLowerCase().includes(query));
+  return `
+    ${pageHead('Pacientes','Prontuário, contexto e linha do tempo em um único lugar.', `<button class="btn primary" data-action="new-patient">+ Novo paciente</button>`)}
+    <section class="panel patients-panel">
+      <div class="panel-head"><div><span class="eyebrow">VISÃO 360°</span><h2>Base de pacientes</h2><p>${patients.length} paciente(s) nesta visualização.</p></div></div>
+      <div class="patient-cards">${patients.map(p => `<button class="patient-card" data-action="open-patient" data-id="${p.id}"><span class="avatar large">${initials(p.name)}</span><span class="patient-card-main"><b>${p.name}</b><small>${p.treatment} · ${p.plan}</small><span class="tag-row">${p.tags.map(t=>`<i>${t}</i>`).join('')}</span></span><span class="patient-card-meta"><small>Última visita</small><b>${p.lastVisitDays} dias</b><i class="status-pill ${slug(p.status)}">${p.status}</i></span>${icon('chevron',18)}</button>`).join('')}</div>
+    </section>`;
+}
+
+function prescriptionsPage() {
+  const signed = state.prescriptions.filter(r=>r.status==='Assinada').length;
+  const pending = state.prescriptions.length - signed;
+  return `
+    ${pageHead('Prescrições e Assinaturas','Emissão, vínculo ao paciente e rastreabilidade do fluxo de assinatura.', `<button class="btn primary" data-action="new-prescription">+ Nova prescrição</button>`)}
+    <section class="metric-grid compact">
+      ${miniMetric('Documentos emitidos', state.prescriptions.length)}
+      ${miniMetric('Assinados', signed)}
+      ${miniMetric('Pendentes', pending)}
+      ${miniMetric('Vinculados à timeline', state.prescriptions.length)}
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><span class="eyebrow">DOCUMENTOS CLÍNICOS</span><h2>Prescrições recentes</h2><p>A assinatura registrada nesta versão é o fluxo interno do sistema; integração certificada pode ser acoplada depois.</p></div></div>
+      <div class="rx-list">${state.prescriptions.map(rx => {
+        const p = patientById(rx.patientId);
+        return `<div class="rx-row"><span class="rx-icon">${icon('file',20)}</span><span class="rx-main"><b>${rx.title}</b><small>${p.name} · ${rx.kind} · ${rx.createdAt}</small></span><span><i class="signature-status ${rx.status==='Assinada'?'signed':'pending'}">${rx.status==='Assinada'?icon('check',13):icon('clock',13)} ${rx.status}</i>${rx.signedAt ? `<small>por ${rx.signer} · ${rx.signedAt}</small>` : '<small>Aguardando responsável</small>'}</span><span class="row-actions"><button class="btn tiny secondary" data-action="open-patient" data-id="${p.id}">Timeline</button>${rx.status!=='Assinada'?`<button class="btn tiny" data-action="sign-prescription" data-id="${rx.id}">${icon('signature',14)} Assinar</button>`:`<button class="icon-action" data-action="view-prescription" data-id="${rx.id}">${icon('chevron',16)}</button>`}</span></div>`;
+      }).join('')}</div>
+    </section>`;
+}
+
+function recoveryPage() {
+  const types = ['Todos','60+ dias','Falta','Orçamento','Interrompido','Retorno'];
+  let patients = recoveryCandidates();
+  if (recoveryFilter === '60+ dias') patients = patients.filter(p=>p.lastVisitDays>=60);
+  if (recoveryFilter === 'Falta') patients = patients.filter(p=>p.status.includes('Faltou'));
+  if (recoveryFilter === 'Orçamento') patients = patients.filter(p=>p.status.includes('Orçamento'));
+  if (recoveryFilter === 'Interrompido') patients = patients.filter(p=>p.status.includes('interr
