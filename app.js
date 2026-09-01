@@ -1,60 +1,251 @@
-// Painel Alegrare — Sprint 1
-const STORE='alegrare:sprint1';
-const seed={
-patients:[
-{id:'p1',name:'Camila Nogueira',phone:'(21) 99854-3012',plan:'Particular',lastVisitDays:76,treatment:'Clareamento',potential:1850,risk:82,status:'Sem retorno',tags:['Particular','Clareamento'],timeline:[['28/08/2026 · 14:20','Mensagem preparada','Convite de retorno pronto para revisão.','message'],['16/06/2026 · 10:00','Sessão de clareamento','Sessão 2/3 concluída. Retorno recomendado em 30 dias.','treatment'],['16/06/2026 · 09:45','Pagamento registrado','R$ 650,00 · Pix.','payment'],['02/06/2026 · 15:10','Avaliação inicial','Plano de clareamento aprovado.','appointment']]},
-{id:'p2',name:'Roberto Silva',phone:'(21) 99104-7820',plan:'Unimed Odonto',lastVisitDays:43,treatment:'Implante',potential:2400,risk:91,status:'Faltou e não reagendou',tags:['Plano','Implante'],timeline:[['19/08/2026 · 11:00','Não compareceu','Consulta de retorno do implante.','appointment'],['18/08/2026 · 11:05','Confirmação solicitada','Confirmação 24h registrada.','message'],['19/07/2026 · 09:20','Procedimento realizado','Etapa cirúrgica concluída sem intercorrências.','treatment']]},
-{id:'p3',name:'Luana Costa',phone:'(21) 99771-5421',plan:'Particular',lastVisitDays:21,treatment:'Facetas em resina',potential:3200,risk:74,status:'Orçamento pendente',tags:['Particular','Orçamento'],timeline:[['22/08/2026 · 16:40','Orçamento enviado','Facetas em resina · R$ 3.200,00.','budget'],['10/08/2026 · 14:00','Avaliação estética','Planejamento e fotografias realizados.','appointment']]},
-{id:'p4',name:'Marcos Vinicius',phone:'(21) 99202-1056',plan:'Particular',lastVisitDays:97,treatment:'Reabilitação oral',potential:5800,risk:96,status:'Tratamento interrompido',tags:['Particular','Reabilitação'],timeline:[['26/05/2026 · 13:00','Tratamento interrompido','Etapa protética ainda não iniciada.','treatment'],['26/05/2026 · 12:40','Saldo de tratamento','R$ 5.800,00 em etapas planejadas.','budget'],['12/05/2026 · 10:00','Consulta clínica','Planejamento de reabilitação aprovado.','appointment']]},
-{id:'p5',name:'Ana Paula Rocha',phone:'(21) 99612-0041',plan:'Amil Dental',lastVisitDays:188,treatment:'Limpeza preventiva',potential:450,risk:64,status:'Retorno vencido',tags:['Plano','Limpeza'],timeline:[['24/02/2026 · 09:30','Limpeza concluída','Novo retorno recomendado em 6 meses.','treatment'],['24/02/2026 · 09:00','Consulta preventiva','Sem queixas. Orientações reforçadas.','appointment']]},
-{id:'p6',name:'Felipe Andrade',phone:'(21) 99341-8890',plan:'Particular',lastVisitDays:8,treatment:'Canal',potential:0,risk:18,status:'Em acompanhamento',tags:['Particular','Endodontia'],timeline:[['23/08/2026 · 15:30','Tratamento endodôntico','Primeira sessão concluída.','treatment'],['23/08/2026 · 15:15','Prescrição emitida','Orientação medicamentosa pós-procedimento.','prescription']]}
-],
-opportunities:[
-{id:'o1',patientId:'p4',category:'Tratamento interrompido',value:5800,priority:'Alta',status:'Aberta',next:'Contato direto + proposta de retomada'},
-{id:'o2',patientId:'p3',category:'Orçamento pendente',value:3200,priority:'Alta',status:'Aberta',next:'Retomar orçamento e tirar objeções'},
-{id:'o3',patientId:'p2',category:'Falta sem reagendamento',value:2400,priority:'Alta',status:'Aberta',next:'Oferecer novo horário nesta semana'},
-{id:'o4',patientId:'p1',category:'Sem retorno 60+ dias',value:1850,priority:'Média',status:'Aberta',next:'Convidar para continuidade do clareamento'},
-{id:'o5',patientId:'p5',category:'Retorno de limpeza vencido',value:450,priority:'Média',status:'Aberta',next:'Agendar prevenção'}
-],
-prescriptions:[
-{id:'r1',patientId:'p6',title:'Pós-operatório endodôntico',kind:'Receituário',created:'23/08/2026 15:15',status:'Assinada',signed:'23/08/2026 15:17',signer:'Dra. Danielle'},
-{id:'r2',patientId:'p2',title:'Orientações pós-implante',kind:'Orientação clínica',created:'19/07/2026 09:35',status:'Assinada',signed:'19/07/2026 09:38',signer:'Dra. Danielle'},
-{id:'r3',patientId:'p1',title:'Orientações de clareamento',kind:'Orientação clínica',created:'16/06/2026 10:10',status:'Pendente',signed:null,signer:null}
-],
-appointments:[['09:00','p6','Sessão endodôntica','Confirmada'],['10:30','p3','Retorno planejamento','Aguardando'],['13:30','p1','Clareamento','Confirmada'],['15:00','p2','Retorno implante','Pendente']],
-recoveryLog:[]};
-let state=load();let route=location.hash.slice(2)||'dashboard';let modal=null;let sidebar=false;let oppFilter='Todas';let recoveryFilter='Todos';let search='';
-function load(){try{return Object.assign(structuredClone(seed),JSON.parse(localStorage.getItem(STORE)||'{}'))}catch{return structuredClone(seed)}}
-function save(){localStorage.setItem(STORE,JSON.stringify(state))}
-const $=s=>document.querySelector(s), money=v=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])), slug=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-'), initials=n=>n.split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase(), pBy=id=>state.patients.find(p=>p.id===id), openOpp=()=>state.opportunities.filter(o=>o.status!=='Recuperada'), potential=()=>openOpp().reduce((s,o)=>s+o.value,0), recoverables=()=>state.patients.filter(p=>['Sem retorno','Faltou e não reagendou','Orçamento pendente','Tratamento interrompido','Retorno vencido'].includes(p.status));
-const icons={dashboard:'▦',opportunities:'✦',patients:'◎',agenda:'□',prescriptions:'▤',recovery:'↻',financial:'$ ',messages:'◌',settings:'⚙'};
-const nav=[['dashboard','Visão geral'],['opportunities','Oportunidades'],['patients','Pacientes'],['agenda','Agenda'],['prescriptions','Prescrições'],['recovery','Recuperação'],['financial','Financeiro'],['messages','Atendimento'],['settings','Configurações']];
-function head(title,sub,actions=''){return `<section class="page-head"><div><span class="eyebrow">ALEGRARE · GESTÃO CLÍNICA</span><h1>${title}</h1><p>${sub}</p></div><div class="head-actions">${actions}</div></section>`}
-function metric(label,value,note,tone,go){return `<button class="metric ${tone}" data-route="${go}"><span class="metric-label">${label}</span><strong>${value}</strong><small>${note}</small></button>`}
-function shell(body){let active=nav.find(n=>n[0]===route)?.[1]||'Visão geral';return `<div class="app-shell"><aside class="sidebar ${sidebar?'open':''}"><div class="brand-row"><button class="brand" data-route="dashboard"><span class="brand-mark">A</span><span><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></span></button><button class="sidebar-close" data-action="close-menu">×</button></div><div class="workspace"><i></i><span><b>Alegrare</b><small>Ambiente clínico</small></span></div><nav>${nav.map(([r,l])=>`<button class="nav-item ${route===r?'active':''}" data-route="${r}"><span class="nav-icon">${icons[r]}</span><span>${l}</span>${r==='opportunities'?`<i>${openOpp().length}</i>`:''}</button>`).join('')}</nav><div class="sidebar-footer"><div class="secure"><span>✓</span><div><b>Ambiente protegido</b><small>Auth + RLS preparados</small></div></div><button class="profile" data-route="settings"><span class="avatar">DD</span><span><b>Danielle</b><small>Gestão da clínica</small></span></button></div></aside>${sidebar?'<button class="scrim" data-action="close-menu"></button>':''}<main><header class="topbar"><div><button class="menu" data-action="open-menu">☰</button><span class="crumb">Alegrare / <b>${active}</b></span></div><div class="top-actions"><label class="search"><span>⌕</span><input id="global-search" value="${esc(search)}" placeholder="Buscar paciente..." autocomplete="off"></label><span class="date-chip">31 ago 2026</span><button class="avatar top" data-route="settings">DD</button></div></header><div class="content">${body}</div></main></div>${modal?renderModal():''}<div id="toast"></div>`}
-function dashboard(){const op=openOpp(), hi=op.filter(o=>o.priority==='Alta'), top=[...op].sort((a,b)=>b.value-a.value).slice(0,3), topPct=potential()?Math.round(top.reduce((s,o)=>s+o.value,0)/potential()*100):0;return `${head('Olá, Danielle.','O painel prioriza o que merece ação hoje — não apenas o que aconteceu.','<button class="btn ghost" data-route="opportunities">Ver oportunidades</button><button class="btn primary" data-action="new-rx">+ Nova prescrição</button>')}<section class="metric-grid">${metric('Consultas hoje','9','2 aguardando confirmação','neutral','agenda')}${metric('Oportunidades abertas',op.length,`${hi.length} de alta prioridade`,'orange','opportunities')}${metric('Receita potencial',money(potential()),'em pacientes recuperáveis','blue','opportunities')}${metric('Pacientes para recuperar',recoverables().length,'fila pronta para ação','yellow','recovery')}</section><section class="insight"><span>✦</span><div><b>Inteligência do dia</b><p>As 3 oportunidades de maior valor concentram <strong>${topPct}%</strong> do potencial aberto. Priorizar esses contatos tende a gerar mais impacto com menos esforço operacional.</p></div><button data-route="opportunities">Analisar agora →</button></section><div class="grid-2"><section class="card"><div class="card-head"><div><span class="eyebrow">PRIORIDADE</span><h2>O que precisa da sua atenção</h2></div><button data-route="opportunities">Ver tudo →</button></div>${top.map(o=>{let p=pBy(o.patientId);return `<button class="priority-row" data-action="open-opp" data-id="${o.id}"><span class="dot ${o.priority==='Alta'?'high':'mid'}"></span><span><b>${esc(p.name)}</b><small>${esc(o.category)}</small></span><span class="value"><b>${money(o.value)}</b><small>potencial</small></span><span>›</span></button>`}).join('')}</section><section class="card"><div class="card-head"><div><span class="eyebrow">AGENDA</span><h2>Próximos atendimentos</h2></div><button data-route="agenda">Abrir agenda →</button></div>${state.appointments.map(a=>{let p=pBy(a[1]);return `<div class="agenda-row"><time>${a[0]}</time><span class="avatar soft">${initials(p.name)}</span><span><b>${esc(p.name)}</b><small>${esc(a[2])}</small></span><i class="pill ${slug(a[3])}">${a[3]}</i></div>`}).join('')}</section></div><div class="grid-2 lower"><section class="card"><div class="card-head"><div><span class="eyebrow">OPORTUNIDADES</span><h2>Onde existe receita recuperável</h2></div></div>${bars()}</section><section class="card"><div class="card-head"><div><span class="eyebrow">AÇÕES RÁPIDAS</span><h2>Transforme informação em ação</h2></div></div><div class="quick-actions"><button data-route="recovery"><b>↻ Recuperar pacientes</b><small>${recoverables().length} pacientes aguardando ação</small></button><button data-action="new-rx"><b>▤ Nova prescrição</b><small>Gerar e encaminhar para assinatura</small></button><button data-route="patients"><b>◎ Abrir pacientes</b><small>Timeline clínica completa</small></button><button data-route="messages"><b>◌ Fila de mensagens</b><small>Contatos preparados para WhatsApp</small></button></div></section></div>`}
-function bars(){let g={};openOpp().forEach(o=>g[o.category]=(g[o.category]||0)+o.value);let max=Math.max(...Object.values(g),1);return `<div class="bars">${Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div><span><small>${esc(k)}</small><b>${money(v)}</b></span><i><em style="width:${Math.max(8,v/max*100)}%"></em></i></div>`).join('')}</div>`}
-function opportunities(){let cats=['Todas',...new Set(state.opportunities.map(o=>o.category))], rows=openOpp().filter(o=>oppFilter==='Todas'||o.category===oppFilter).sort((a,b)=>(a.priority==='Alta'?-1:1)-(b.priority==='Alta'?-1:1)||b.value-a.value);return `${head('Central de Oportunidades','O sistema cruza comportamento, retorno e tratamento para mostrar onde agir primeiro.','<button class="btn primary" data-route="recovery">Abrir recuperação</button>')}<section class="metric-grid compact">${metric('Oportunidades abertas',openOpp().length,'ativas agora','neutral','opportunities')}${metric('Potencial estimado',money(potential()),'valor associado','blue','opportunities')}${metric('Alta prioridade',openOpp().filter(o=>o.priority==='Alta').length,'ação imediata','orange','opportunities')}${metric('Em contato',openOpp().filter(o=>o.status==='Em contato').length,'em andamento','yellow','opportunities')}</section><section class="card"><div class="card-head"><div><span class="eyebrow">PRIORIZAÇÃO AUTOMÁTICA</span><h2>Pacientes com oportunidade identificada</h2><p>Ordenados por risco, momento e valor potencial.</p></div></div><div class="chips">${cats.map(c=>`<button class="chip ${oppFilter===c?'active':''}" data-filter-opp="${esc(c)}">${esc(c)}</button>`).join('')}</div><div class="table"><div class="table-head"><span>Paciente</span><span>Motivo</span><span>Prioridade</span><span>Potencial</span><span>Próxima ação</span><span></span></div>${rows.map(o=>{let p=pBy(o.patientId);return `<div class="table-row"><button class="patient-cell" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.name)}</span><span><b>${esc(p.name)}</b><small>${esc(p.plan)} · ${p.lastVisitDays} dias sem visita</small></span></button><span>${esc(o.category)}</span><span><i class="priority ${o.priority==='Alta'?'high':'mid'}">${o.priority}</i></span><span><b>${money(o.value)}</b></span><span>${esc(o.next)}</span><span class="row-actions"><button data-action="open-opp" data-id="${o.id}">›</button><button class="btn tiny" data-action="recover" data-id="${o.id}">${o.status==='Em contato'?'Continuar':'Recuperar'}</button></span></div>`}).join('')}</div></section>`}
-function patients(){let q=search.trim().toLowerCase(), list=state.patients.filter(p=>!q||[p.name,p.treatment,...p.tags].join(' ').toLowerCase().includes(q));return `${head('Pacientes','Prontuário, contexto e linha do tempo em um único lugar.','<button class="btn primary" data-action="new-patient">+ Novo paciente</button>')}<section class="card"><div class="card-head"><div><span class="eyebrow">VISÃO 360°</span><h2>Base de pacientes</h2><p>${list.length} paciente(s) nesta visualização.</p></div></div><div class="patient-list">${list.map(p=>`<button class="patient-card" data-action="open-patient" data-id="${p.id}"><span class="avatar big">${initials(p.name)}</span><span class="main"><b>${esc(p.name)}</b><small>${esc(p.treatment)} · ${esc(p.plan)}</small><span class="tags">${p.tags.map(t=>`<i>${esc(t)}</i>`).join('')}</span></span><span class="meta"><small>Última visita</small><b>${p.lastVisitDays} dias</b><i class="pill ${slug(p.status)}">${esc(p.status)}</i></span><span>›</span></button>`).join('')}</div></section>`}
-function prescriptions(){let signed=state.prescriptions.filter(r=>r.status==='Assinada').length;return `${head('Prescrições e Assinaturas','Emissão, vínculo ao paciente e rastreabilidade do fluxo de assinatura.','<button class="btn primary" data-action="new-rx">+ Nova prescrição</button>')}<section class="metric-grid compact">${metric('Documentos emitidos',state.prescriptions.length,'histórico','neutral','prescriptions')}${metric('Assinados',signed,'concluídos','blue','prescriptions')}${metric('Pendentes',state.prescriptions.length-signed,'aguardando responsável','orange','prescriptions')}${metric('Vinculados à timeline',state.prescriptions.length,'rastreabilidade','yellow','patients')}</section><section class="card"><div class="card-head"><div><span class="eyebrow">DOCUMENTOS CLÍNICOS</span><h2>Prescrições recentes</h2><p>Assinatura interna registrada agora; integração certificada pode ser acoplada sem quebrar o fluxo.</p></div></div><div class="rx-list">${state.prescriptions.map(r=>{let p=pBy(r.patientId);return `<div class="rx-row"><span class="doc-icon">▤</span><span><b>${esc(r.title)}</b><small>${esc(p.name)} · ${esc(r.kind)} · ${r.created}</small></span><span><i class="signature ${r.status==='Assinada'?'signed':'pending'}">${r.status==='Assinada'?'✓':'◷'} ${r.status}</i><small>${r.signed?`por ${r.signer} · ${r.signed}`:'Aguardando responsável'}</small></span><span class="row-actions"><button class="btn tiny ghost" data-action="open-patient" data-id="${p.id}">Timeline</button>${r.status!=='Assinada'?`<button class="btn tiny" data-action="sign-rx" data-id="${r.id}">Assinar</button>`:`<button data-action="view-rx" data-id="${r.id}">›</button>`}</span></div>`}).join('')}</div></section>`}
-function recovery(){let types=['Todos','60+ dias','Falta','Orçamento','Interrompido','Retorno'], list=recoverables();if(recoveryFilter==='60+ dias')list=list.filter(p=>p.lastVisitDays>=60);if(recoveryFilter==='Falta')list=list.filter(p=>p.status.includes('Faltou'));if(recoveryFilter==='Orçamento')list=list.filter(p=>p.status.includes('Orçamento'));if(recoveryFilter==='Interrompido')list=list.filter(p=>p.status.includes('interrompido'));if(recoveryFilter==='Retorno')list=list.filter(p=>p.status.includes('Retorno'));return `${head('Recuperação de Pacientes','Transforme faltas, inatividade e tratamento interrompido em uma fila objetiva de ação.','<button class="btn ghost" data-route="opportunities">Ver oportunidades</button>')}<section class="recovery-hero"><div><span class="eyebrow">CARTEIRA RECUPERÁVEL</span><strong>${money(list.reduce((s,p)=>s+p.potential,0))}</strong><p>potencial associado aos pacientes desta fila</p></div><div><b>${list.length}</b><span>pacientes</span></div><div><b>${list.filter(p=>p.risk>=80).length}</b><span>alto risco</span></div></section><section class="card"><div class="chips">${types.map(t=>`<button class="chip ${recoveryFilter===t?'active':''}" data-filter-recovery="${t}">${t}</button>`).join('')}</div><div class="recovery-list">${list.map(p=>{let o=state.opportunities.find(x=>x.patientId===p.id&&x.status!=='Recuperada');return `<div class="recovery-row"><button class="patient-cell" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.name)}</span><span><b>${esc(p.name)}</b><small>${esc(p.status)} · ${p.lastVisitDays} dias</small></span></button><span><small>Tratamento</small><b>${esc(p.treatment)}</b></span><span><small>Potencial</small><b>${money(p.potential)}</b></span><span><small>Risco</small><b>${p.risk}/100</b></span><span class="row-actions">${o?`<button class="btn tiny" data-action="recover" data-id="${o.id}">Preparar contato</button><button class="btn tiny ghost" data-action="mark-recovered" data-id="${o.id}">Recuperado</button>`:'<i class="signature signed">✓ Recuperado</i>'}</span></div>`}).join('')||'<div class="empty">Nenhum paciente nesta fila.</div>'}</div></section>`}
-function agenda(){return `${head('Agenda','Visão operacional dos próximos atendimentos.','<button class="btn primary">+ Nova consulta</button>')}<section class="card"><div class="agenda-full">${state.appointments.map(a=>{let p=pBy(a[1]);return `<div class="agenda-full-row"><time>${a[0]}</time><span class="avatar soft">${initials(p.name)}</span><span><b>${esc(p.name)}</b><small>${esc(a[2])} · ${esc(p.phone)}</small></span><i class="pill ${slug(a[3])}">${a[3]}</i><button data-action="open-patient" data-id="${p.id}">Abrir paciente →</button></div>`}).join('')}</div></section>`}
-function placeholder(title,sub){return `${head(title,sub)}<section class="card empty-module"><span>✦</span><h2>Módulo mantido enxuto nesta sprint</h2><p>Hoje a prioridade está em oportunidades, inteligência, timeline, prescrições/assinaturas e recuperação. O restante entra nas próximas rodadas para preservar o efeito de evolução contínua.</p></section>`}
-function settings(){return `${head('Configurações','Parâmetros da clínica e ambiente.')}<section class="card settings-grid"><div><span class="eyebrow">IDENTIDADE</span><h2>Alegrare</h2><p>Azul institucional #2680B3 · azul luminoso #089FD9 · laranja #DC853D · amarelo #EAB43F.</p></div><div><span class="eyebrow">SEGURANÇA</span><h2>Supabase preparado</h2><p>Estrutura com RLS por clínica e tabelas para as cinco frentes desta sprint.</p></div><div><span class="eyebrow">VERSÃO</span><h2>Sprint 1</h2><p>Camada demonstrável pronta para apresentação e validação.</p></div><div><button class="btn ghost" data-action="reset-demo">Restaurar dados de demonstração</button></div></section>`}
-function renderModal(){if(modal.type==='patient'){let p=pBy(modal.id);return `<div class="modal-bg" data-action="close-modal"><section class="modal wide" onclick="event.stopPropagation()"><header><div><span class="eyebrow">TIMELINE DO PACIENTE</span><h2>${esc(p.name)}</h2><p>${esc(p.treatment)} · ${esc(p.plan)} · ${esc(p.phone)}</p></div><button data-action="close-modal">×</button></header><div class="patient-overview"><div><small>Status atual</small><b>${esc(p.status)}</b></div><div><small>Última visita</small><b>${p.lastVisitDays} dias</b></div><div><small>Risco</small><b>${p.risk}/100</b></div><div><small>Potencial</small><b>${money(p.potential)}</b></div></div><div class="timeline">${p.timeline.map(t=>`<div><span class="timeline-dot ${t[3]}"></span><time>${t[0]}</time><section><b>${esc(t[1])}</b><p>${esc(t[2])}</p></section></div>`).join('')}</div></section></div>`}
-if(modal.type==='opp'){let o=state.opportunities.find(x=>x.id===modal.id),p=pBy(o.patientId);return `<div class="modal-bg" data-action="close-modal"><section class="modal" onclick="event.stopPropagation()"><header><div><span class="eyebrow">OPORTUNIDADE</span><h2>${esc(p.name)}</h2><p>${esc(o.category)}</p></div><button data-action="close-modal">×</button></header><div class="opportunity-detail"><div><small>Potencial</small><strong>${money(o.value)}</strong></div><div><small>Prioridade</small><strong>${o.priority}</strong></div><div><small>Status</small><strong>${o.status}</strong></div></div><label>Próxima ação<textarea readonly>${esc(o.next)}</textarea></label><div class="modal-actions"><button class="btn ghost" data-action="open-patient" data-id="${p.id}">Abrir timeline</button><button class="btn primary" data-action="recover" data-id="${o.id}">Preparar recuperação</button></div></section></div>`}
-if(modal.type==='new-rx'){return `<div class="modal-bg" data-action="close-modal"><section class="modal" onclick="event.stopPropagation()"><header><div><span class="eyebrow">PRESCRIÇÕES</span><h2>Nova prescrição</h2><p>O documento será vinculado ao paciente e registrado na timeline.</p></div><button data-action="close-modal">×</button></header><form id="rx-form"><label>Paciente<select name="patientId" required>${state.patients.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label><label>Tipo<select name="kind"><option>Receituário</option><option>Orientação clínica</option><option>Atestado</option></select></label><label>Título<input name="title" required placeholder="Ex.: Orientações pós-procedimento"></label><label>Conteúdo<textarea name="body" required placeholder="Descreva as orientações ou prescrição..."></textarea></label><div class="modal-actions"><button type="button" class="btn ghost" data-action="close-modal">Cancelar</button><button class="btn primary" type="submit">Criar e enviar para assinatura</button></div></form></section></div>`}
-if(modal.type==='view-rx'){let r=state.prescriptions.find(x=>x.id===modal.id),p=pBy(r.patientId);return `<div class="modal-bg" data-action="close-modal"><section class="modal" onclick="event.stopPropagation()"><header><div><span class="eyebrow">DOCUMENTO CLÍNICO</span><h2>${esc(r.title)}</h2><p>${esc(p.name)} · ${r.created}</p></div><button data-action="close-modal">×</button></header><div class="paper"><h3>Alegrare Odontologia Especial</h3><p><b>Paciente:</b> ${esc(p.name)}</p><p><b>Documento:</b> ${esc(r.kind)}</p><hr><p>${esc(r.body||'Documento registrado no sistema.')}</p><footer>${r.status==='Assinada'?`Assinado por ${esc(r.signer)} em ${r.signed}`:'Aguardando assinatura'}</footer></div></section></div>`}return ''}
-function page(){if(route==='dashboard')return dashboard();if(route==='opportunities')return opportunities();if(route==='patients')return patients();if(route==='prescriptions')return prescriptions();if(route==='recovery')return recovery();if(route==='agenda')return agenda();if(route==='settings')return settings();if(route==='financial')return placeholder('Financeiro','Controle financeiro da clínica.');if(route==='messages')return placeholder('Atendimento','Mensagens, lembretes e futura integração com WhatsApp.');return dashboard()}
-function render(){document.getElementById('app').innerHTML=shell(page());bindForms()}
-function toast(msg){let t=$('#toast');if(!t)return;t.textContent=msg;t.className='show';setTimeout(()=>t.className='',2800)}
-function navigate(r){route=r;location.hash='#/'+r;sidebar=false;modal=null;render();scrollTo(0,0)}
-function nowBR(){return new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date())}
-function startRecovery(id){let o=state.opportunities.find(x=>x.id===id),p=pBy(o.patientId);o.status='Em contato';state.recoveryLog.unshift({patientId:p.id,opportunityId:id,at:nowBR(),action:'Contato de recuperação preparado'});p.timeline.unshift([nowBR(),'Recuperação iniciada',`Contato preparado: ${o.next}.`,'recovery']);save();modal=null;render();toast(`Contato de recuperação preparado para ${p.name}.`)}
-function markRecovered(id){let o=state.opportunities.find(x=>x.id===id),p=pBy(o.patientId);o.status='Recuperada';p.status='Em acompanhamento';p.timeline.unshift([nowBR(),'Paciente recuperado','Retorno/reagendamento registrado pela equipe.','recovery']);state.recoveryLog.unshift({patientId:p.id,opportunityId:id,at:nowBR(),action:'Paciente marcado como recuperado'});save();render();toast(`${p.name} marcado como recuperado.`)}
-function signRx(id){let r=state.prescriptions.find(x=>x.id===id),p=pBy(r.patientId);r.status='Assinada';r.signer='Dra. Danielle';r.signed=nowBR();p.timeline.unshift([nowBR(),'Documento assinado',`${r.title} · assinatura interna registrada por Dra. Danielle.`,'signature']);save();render();toast('Assinatura registrada e timeline atualizada.')}
-function bindForms(){let f=$('#rx-form');if(f)f.addEventListener('submit',e=>{e.preventDefault();let d=new FormData(f),p=pBy(d.get('patientId')),id='r'+Date.now();state.prescriptions.unshift({id,patientId:p.id,title:d.get('title'),kind:d.get('kind'),body:d.get('body'),created:nowBR(),status:'Pendente',signed:null,signer:null});p.timeline.unshift([nowBR(),'Prescrição emitida',`${d.get('title')} · aguardando assinatura.`,'prescription']);save();modal={type:'view-rx',id};render();toast('Prescrição criada e vinculada ao paciente.')})}
-document.addEventListener('click',e=>{let b=e.target.closest('[data-route],[data-action],[data-filter-opp],[data-filter-recovery]');if(!b)return;if(b.dataset.route)return navigate(b.dataset.route);if(b.dataset.filterOpp){oppFilter=b.dataset.filterOpp;return render()}if(b.dataset.filterRecovery){recoveryFilter=b.dataset.filterRecovery;return render()}let a=b.dataset.action,id=b.dataset.id;if(a==='open-menu'){sidebar=true;return render()}if(a==='close-menu'){sidebar=false;return render()}if(a==='close-modal'){modal=null;return render()}if(a==='open-patient'){modal={type:'patient',id};return render()}if(a==='open-opp'){modal={type:'opp',id};return render()}if(a==='new-rx'){modal={type:'new-rx'};return render()}if(a==='recover')return startRecovery(id);if(a==='mark-recovered')return markRecovered(id);if(a==='sign-rx')return signRx(id);if(a==='view-rx'){modal={type:'view-rx',id};return render()}if(a==='reset-demo'){localStorage.removeItem(STORE);state=structuredClone(seed);render();toast('Dados de demonstração restaurados.')}});
-document.addEventListener('input',e=>{if(e.target.id==='global-search'){search=e.target.value;if(route!=='patients'&&search.trim())route='patients';render();setTimeout(()=>{let i=$('#global-search');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},0)}});
-window.addEventListener('hashchange',()=>{route=location.hash.slice(2)||'dashboard';modal=null;render()});
+// Painel Alegrare — versão enxuta
+const STORE = 'alegrare:simple-v2';
+
+const medications = [
+  { id: 'MED-0001', name: 'Amoxicilina', active: 'amoxicilina' },
+  { id: 'MED-0002', name: 'Azitromicina', active: 'azitromicina' },
+  { id: 'MED-0003', name: 'Ibuprofeno', active: 'ibuprofeno' },
+  { id: 'MED-0004', name: 'Paracetamol', active: 'paracetamol' },
+  { id: 'MED-0005', name: 'Dipirona', active: 'dipirona monoidratada' },
+  { id: 'MED-0006', name: 'Clorexidina', active: 'digluconato de clorexidina' },
+  { id: 'MED-0007', name: 'Metronidazol', active: 'metronidazol' },
+  { id: 'MED-0008', name: 'Dexametasona', active: 'dexametasona' }
+];
+
+const seed = {
+  patients: [
+    { id:'p1', name:'Camila Nogueira', phone:'(21) 99854-3012', last:'76 dias', treatment:'Clareamento', status:'Sem retorno', potential:1850 },
+    { id:'p2', name:'Roberto Silva', phone:'(21) 99104-7820', last:'43 dias', treatment:'Implante', status:'Faltou e não reagendou', potential:2400 },
+    { id:'p3', name:'Luana Costa', phone:'(21) 99771-5421', last:'21 dias', treatment:'Facetas em resina', status:'Orçamento pendente', potential:3200 },
+    { id:'p4', name:'Marcos Vinicius', phone:'(21) 99202-1056', last:'97 dias', treatment:'Reabilitação oral', status:'Tratamento interrompido', potential:5800 },
+    { id:'p5', name:'Ana Paula Rocha', phone:'(21) 99612-0041', last:'188 dias', treatment:'Limpeza preventiva', status:'Retorno vencido', potential:450 }
+  ],
+  opportunities: [
+    { id:'o1', patientId:'p4', reason:'Tratamento interrompido', value:5800, priority:'Alta', status:'Aberta' },
+    { id:'o2', patientId:'p3', reason:'Orçamento pendente', value:3200, priority:'Alta', status:'Aberta' },
+    { id:'o3', patientId:'p2', reason:'Falta sem reagendamento', value:2400, priority:'Alta', status:'Aberta' },
+    { id:'o4', patientId:'p1', reason:'Sem retorno há mais de 60 dias', value:1850, priority:'Média', status:'Aberta' },
+    { id:'o5', patientId:'p5', reason:'Retorno preventivo vencido', value:450, priority:'Média', status:'Aberta' }
+  ],
+  prescriptions: [
+    { id:'r1', patientId:'p2', title:'Orientações pós-implante', meds:['Amoxicilina'], status:'Assinada', signer:'Dra. Danielle' },
+    { id:'r2', patientId:'p1', title:'Orientações de clareamento', meds:[], status:'Aguardando assinatura', signer:null }
+  ],
+  documents: [
+    { id:'d1', patientId:'p2', name:'termo-implante.pdf', signerScope:'Paciente', status:'Aguardando paciente' }
+  ],
+  timeline: {
+    p1:[['28/08/2026','Mensagem de retorno preparada'],['16/06/2026','Sessão de clareamento realizada'],['02/06/2026','Avaliação inicial']],
+    p2:[['19/08/2026','Paciente não compareceu'],['19/07/2026','Procedimento de implante realizado'],['19/07/2026','Orientações assinadas']],
+    p3:[['22/08/2026','Orçamento enviado'],['10/08/2026','Avaliação estética']],
+    p4:[['26/05/2026','Tratamento interrompido'],['12/05/2026','Planejamento aprovado']],
+    p5:[['24/02/2026','Limpeza concluída'],['24/02/2026','Retorno recomendado em 6 meses']]
+  }
+};
+
+let state = load();
+let route = location.hash.replace('#/','') || 'home';
+let modal = null;
+let selectedMeds = [];
+
+function load(){
+  try { return Object.assign(structuredClone(seed), JSON.parse(localStorage.getItem(STORE) || '{}')); }
+  catch { return structuredClone(seed); }
+}
+function save(){ localStorage.setItem(STORE, JSON.stringify(state)); }
+function patient(id){ return state.patients.find(p=>p.id===id); }
+function money(v){ return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v); }
+function esc(v){ return String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function initials(name){ return name.split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase(); }
+function openOpp(){ return state.opportunities.filter(o=>o.status!=='Recuperada'); }
+function potential(){ return openOpp().reduce((s,o)=>s+o.value,0); }
+
+const nav = [
+  ['home','Início'],
+  ['patients','Pacientes'],
+  ['prescriptions','Prescrições e documentos'],
+  ['opportunities','Oportunidades'],
+  ['recovery','Recuperação']
+];
+
+function shell(body){
+  return `<div class="shell">
+    <aside class="sidebar">
+      <button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button>
+      <nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}${r==='opportunities'?`<i>${openOpp().length}</i>`:''}</button>`).join('')}</nav>
+      <div class="side-note"><b>Versão simplificada</b><small>Menos telas. Ações mais claras.</small></div>
+    </aside>
+    <main>
+      <header class="top"><div><span>Alegrare</span><b>${nav.find(n=>n[0]===route)?.[1] || 'Início'}</b></div><button class="avatar">DD</button></header>
+      <div class="content">${body}</div>
+    </main>
+  </div>${modal ? renderModal() : ''}<div id="toast"></div>`;
+}
+
+function pageHead(title, sub, action=''){
+  return `<section class="page-head"><div><h1>${title}</h1><p>${sub}</p></div>${action}</section>`;
+}
+
+function home(){
+  const attention = [...openOpp()].sort((a,b)=>b.value-a.value).slice(0,3);
+  return `${pageHead('Bom dia, Danielle.','Hoje o painel mostra só o que precisa de atenção.','<button class="primary" data-action="new-rx">Nova prescrição</button>')}
+  <section class="metrics">
+    <button data-route="opportunities"><small>Oportunidades abertas</small><strong>${openOpp().length}</strong><span>Ver pacientes que precisam de ação</span></button>
+    <button data-route="opportunities"><small>Valor potencial</small><strong>${money(potential())}</strong><span>Associado aos retornos em aberto</span></button>
+    <button data-route="prescriptions"><small>Assinaturas pendentes</small><strong>${state.prescriptions.filter(r=>r.status!=='Assinada').length + state.documents.filter(d=>d.status!=='Assinado').length}</strong><span>Profissional ou paciente</span></button>
+  </section>
+  <section class="card">
+    <div class="card-title"><div><h2>Precisa da sua atenção</h2><p>Três ações prioritárias. Sem excesso de informação.</p></div><button class="link" data-route="opportunities">Ver todas</button></div>
+    <div class="attention-list">${attention.map(o=>{const p=patient(o.patientId);return `<div class="attention-row"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(o.reason)}</small></div><strong>${money(o.value)}</strong><button class="secondary" data-action="recover" data-id="${o.id}">Recuperar paciente</button></div>`}).join('')}</div>
+  </section>`;
+}
+
+function patients(){
+  return `${pageHead('Pacientes','Abra um paciente para ver apenas o histórico que importa.')}
+  <section class="card patient-list">${state.patients.map(p=>`<button class="patient-row" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(p.treatment)} · última visita: ${p.last}</small></div><span class="status">${esc(p.status)}</span><i>›</i></button>`).join('')}</section>`;
+}
+
+function prescriptions(){
+  return `${pageHead('Prescrições e documentos','Crie uma prescrição ou envie um arquivo para assinatura.','<div class="head-actions"><button class="secondary" data-action="upload-doc">Enviar documento</button><button class="primary" data-action="new-rx">Nova prescrição</button></div>')}
+  <div class="grid2">
+    <section class="card"><div class="card-title"><div><h2>Prescrições</h2><p>Medicamentos identificados enquanto você digita.</p></div></div>
+      <div class="simple-list">${state.prescriptions.map(r=>{const p=patient(r.patientId);return `<div class="simple-row"><div><b>${esc(r.title)}</b><small>${esc(p.name)}${r.meds?.length?' · '+r.meds.map(esc).join(', '):''}</small></div><span class="status">${esc(r.status)}</span>${r.status!=='Assinada'?`<button class="secondary" data-action="sign-rx" data-id="${r.id}">Assinar</button>`:''}</div>`}).join('')}</div>
+    </section>
+    <section class="card"><div class="card-title"><div><h2>Documentos enviados</h2><p>O signatário pode ser a profissional, o paciente ou ambos.</p></div></div>
+      <div class="simple-list">${state.documents.length?state.documents.map(d=>{const p=patient(d.patientId);return `<div class="simple-row"><div><b>${esc(d.name)}</b><small>${esc(p.name)} · assinatura: ${esc(d.signerScope)}</small></div><span class="status">${esc(d.status)}</span>${d.status!=='Assinado'?`<button class="secondary" data-action="advance-doc" data-id="${d.id}">Registrar assinatura</button>`:''}</div>`}).join(''):'<p class="empty">Nenhum documento enviado.</p>'}</div>
+    </section>
+  </div>`;
+}
+
+function opportunities(){
+  return `${pageHead('Oportunidades','Uma lista simples: paciente, motivo, valor e ação.')}
+  <section class="card"><div class="opp-list">${openOpp().sort((a,b)=>b.value-a.value).map(o=>{const p=patient(o.patientId);return `<div class="opp-row"><div class="opp-main"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(o.reason)}</small></div></div><strong>${money(o.value)}</strong><span class="priority ${o.priority==='Alta'?'high':''}">${o.priority}</span><button class="primary" data-action="recover" data-id="${o.id}">Recuperar paciente</button></div>`}).join('')}</div></section>`;
+}
+
+function recovery(){
+  const rows = openOpp().filter(o=>o.status==='Em contato' || o.status==='Aberta');
+  return `${pageHead('Recuperação','Acompanhe somente quem precisa voltar para a agenda.')}
+  <section class="card"><div class="recovery-list">${rows.map(o=>{const p=patient(o.patientId);return `<div class="opp-row"><div class="opp-main"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(o.reason)}</small></div></div><span class="status">${esc(o.status)}</span><button class="secondary" data-action="mark-contact" data-id="${o.id}">Registrar contato</button><button class="primary" data-action="mark-recovered" data-id="${o.id}">Marcar como recuperado</button></div>`}).join('')}</div></section>`;
+}
+
+function patientModal(id){
+  const p=patient(id); const history=state.timeline[id]||[];
+  return `<div class="modal-card wide"><div class="modal-head"><div><h2>${esc(p.name)}</h2><p>${esc(p.treatment)} · ${esc(p.phone)}</p></div><button data-action="close">×</button></div>
+    <div class="patient-summary"><div><small>Status</small><b>${esc(p.status)}</b></div><div><small>Última visita</small><b>${p.last}</b></div><div><small>Valor relacionado</small><b>${money(p.potential)}</b></div></div>
+    <h3>Histórico do paciente</h3><div class="timeline">${history.map(h=>`<div><i></i><span><small>${h[0]}</small><b>${esc(h[1])}</b></span></div>`).join('')}</div>
+    <div class="modal-actions"><button class="secondary" data-action="close">Fechar</button><button class="primary" data-action="new-rx-for" data-id="${p.id}">Criar prescrição</button></div>
+  </div>`;
+}
+
+function rxModal(patientId=''){
+  const opts=state.patients.map(p=>`<option value="${p.id}" ${p.id===patientId?'selected':''}>${esc(p.name)}</option>`).join('');
+  return `<div class="modal-card"><div class="modal-head"><div><h2>Nova prescrição</h2><p>Digite o medicamento. O sistema identifica as opções a partir das primeiras letras.</p></div><button data-action="close">×</button></div>
+    <label>Paciente<select id="rx-patient"><option value="">Selecione</option>${opts}</select></label>
+    <label>Título<input id="rx-title" placeholder="Ex.: Orientações pós-procedimento"></label>
+    <div class="med-field"><label>Medicamento<input id="med-search" autocomplete="off" placeholder="Digite ao menos 2 letras"></label><div id="med-suggestions" class="suggestions"></div></div>
+    <div id="selected-meds" class="selected-meds">${renderSelectedMeds()}</div>
+    <label>Orientações<textarea id="rx-notes" rows="4" placeholder="Escreva as orientações da prescrição"></textarea></label>
+    <div class="modal-actions"><button class="secondary" data-action="close">Cancelar</button><button class="primary" data-action="save-rx">Salvar prescrição</button></div>
+  </div>`;
+}
+
+function uploadModal(){
+  return `<div class="modal-card"><div class="modal-head"><div><h2>Enviar documento</h2><p>Escolha o arquivo e quem precisa assinar.</p></div><button data-action="close">×</button></div>
+    <label>Paciente<select id="doc-patient"><option value="">Selecione</option>${state.patients.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
+    <label>Arquivo<input id="doc-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"></label>
+    <label>Quem precisa assinar?<select id="doc-signer"><option value="Profissional">Profissional</option><option value="Paciente">Paciente</option><option value="Profissional e paciente">Profissional e paciente</option></select></label>
+    <div class="info-box">O arquivo ficará vinculado ao paciente e com status de assinatura visível nesta tela.</div>
+    <div class="modal-actions"><button class="secondary" data-action="close">Cancelar</button><button class="primary" data-action="save-doc">Enviar documento</button></div>
+  </div>`;
+}
+
+function renderSelectedMeds(){
+  if(!selectedMeds.length) return '<small>Nenhum medicamento adicionado.</small>';
+  return selectedMeds.map(m=>`<span><b>${esc(m.name)}</b><small>${m.id}</small><button data-action="remove-med" data-id="${m.id}">×</button></span>`).join('');
+}
+
+function renderModal(){
+  let body='';
+  if(modal?.type==='patient') body=patientModal(modal.id);
+  if(modal?.type==='rx') body=rxModal(modal.patientId||'');
+  if(modal?.type==='upload') body=uploadModal();
+  return `<div class="modal-backdrop"><div>${body}</div></div>`;
+}
+
+function render(){
+  const pages={home,patients,prescriptions,opportunities,recovery};
+  document.querySelector('#app').innerHTML = shell((pages[route]||home)());
+  bindDynamic();
+}
+
+function toast(msg){ const t=document.querySelector('#toast'); if(!t)return; t.textContent=msg; t.className='show'; setTimeout(()=>t.className='',2200); }
+
+function bindDynamic(){
+  document.querySelectorAll('[data-route]').forEach(el=>el.onclick=()=>{location.hash='#/'+el.dataset.route;});
+  document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>handle(el.dataset.action,el.dataset.id));
+  const search=document.querySelector('#med-search');
+  if(search) search.oninput=()=>showMedSuggestions(search.value);
+}
+
+function showMedSuggestions(term){
+  const box=document.querySelector('#med-suggestions'); if(!box)return;
+  const q=term.trim().toLowerCase();
+  if(q.length<2){ box.innerHTML=''; box.classList.remove('open'); return; }
+  const found=medications.filter(m=>m.name.toLowerCase().startsWith(q)||m.active.toLowerCase().startsWith(q)).slice(0,6);
+  box.innerHTML=found.length?found.map(m=>`<button data-med-id="${m.id}"><b>${esc(m.name)}</b><small>${m.id} · ${esc(m.active)}</small></button>`).join(''):'<div class="no-result">Nenhum medicamento encontrado.</div>';
+  box.classList.add('open');
+  box.querySelectorAll('[data-med-id]').forEach(btn=>btn.onclick=()=>{
+    const med=medications.find(m=>m.id===btn.dataset.medId);
+    if(!selectedMeds.some(m=>m.id===med.id)) selectedMeds.push(med);
+    document.querySelector('#selected-meds').innerHTML=renderSelectedMeds();
+    document.querySelector('#med-search').value=''; box.innerHTML=''; box.classList.remove('open');
+    bindDynamic();
+  });
+}
+
+function handle(action,id){
+  if(action==='close'){ modal=null; selectedMeds=[]; render(); return; }
+  if(action==='open-patient'){ modal={type:'patient',id}; render(); return; }
+  if(action==='new-rx'){ selectedMeds=[]; modal={type:'rx'}; render(); return; }
+  if(action==='new-rx-for'){ selectedMeds=[]; modal={type:'rx',patientId:id}; render(); return; }
+  if(action==='upload-doc'){ modal={type:'upload'}; render(); return; }
+  if(action==='remove-med'){ selectedMeds=selectedMeds.filter(m=>m.id!==id); document.querySelector('#selected-meds').innerHTML=renderSelectedMeds(); bindDynamic(); return; }
+  if(action==='save-rx'){
+    const patientId=document.querySelector('#rx-patient').value;
+    const title=document.querySelector('#rx-title').value.trim();
+    if(!patientId||!title){ toast('Selecione o paciente e informe um título.'); return; }
+    state.prescriptions.unshift({id:'r'+Date.now(),patientId,title,meds:selectedMeds.map(m=>m.name),status:'Aguardando assinatura',signer:null});
+    state.timeline[patientId]=state.timeline[patientId]||[];
+    state.timeline[patientId].unshift(['Hoje','Prescrição criada']);
+    save(); modal=null; selectedMeds=[]; route='prescriptions'; location.hash='#/prescriptions'; render(); toast('Prescrição criada.'); return;
+  }
+  if(action==='save-doc'){
+    const patientId=document.querySelector('#doc-patient').value;
+    const file=document.querySelector('#doc-file').files[0];
+    const signerScope=document.querySelector('#doc-signer').value;
+    if(!patientId||!file){ toast('Selecione o paciente e o arquivo.'); return; }
+    let status=signerScope==='Paciente'?'Aguardando paciente':signerScope==='Profissional'?'Aguardando profissional':'Aguardando ambos';
+    state.documents.unshift({id:'d'+Date.now(),patientId,name:file.name,signerScope,status});
+    state.timeline[patientId]=state.timeline[patientId]||[];
+    state.timeline[patientId].unshift(['Hoje',`Documento enviado: ${file.name}`]);
+    save(); modal=null; render(); toast('Documento vinculado ao paciente.'); return;
+  }
+  if(action==='sign-rx'){
+    const r=state.prescriptions.find(x=>x.id===id); if(r){r.status='Assinada';r.signer='Dra. Danielle';save();render();toast('Assinatura registrada.');} return;
+  }
+  if(action==='advance-doc'){
+    const d=state.documents.find(x=>x.id===id); if(d){d.status='Assinado';save();render();toast('Assinatura registrada no documento.');} return;
+  }
+  if(action==='recover'){
+    const o=state.opportunities.find(x=>x.id===id); if(o){o.status='Em contato';save();route='recovery';location.hash='#/recovery';render();toast('Paciente adicionado à recuperação.');} return;
+  }
+  if(action==='mark-contact'){
+    const o=state.opportunities.find(x=>x.id===id); if(o){o.status='Em contato';save();render();toast('Contato registrado.');} return;
+  }
+  if(action==='mark-recovered'){
+    const o=state.opportunities.find(x=>x.id===id); if(o){o.status='Recuperada';const p=patient(o.patientId);if(p)p.status='Reagendado';save();render();toast('Paciente marcado como recuperado.');} return;
+  }
+}
+
+window.addEventListener('hashchange',()=>{route=location.hash.replace('#/','')||'home';modal=null;selectedMeds=[];render();});
 render();
