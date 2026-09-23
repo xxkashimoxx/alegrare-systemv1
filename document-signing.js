@@ -1,9 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase-client.js';
 
-const SUPABASE_URL = 'https://efythbvsdbxrsibvkhmc.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_w1r0-1gnUHKZ2_55YGMWPQ_V7ARypeB';
 const SIGN_FUNCTION = `${SUPABASE_URL}/functions/v1/patient-document-sign`;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $ = (s, root = document) => root.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -12,6 +9,9 @@ const fmtDate = (iso) => iso ? new Intl.DateTimeFormat('pt-BR',{dateStyle:'short
 
 let cachedProfile = null;
 let injecting = false;
+const DOCUMENT_PAGE_SIZE = 12;
+let documentPage = 1;
+let documentTotal = 0;
 
 function toast(message, error = false){
   let el = $('#real-toast');
@@ -19,17 +19,6 @@ function toast(message, error = false){
   el.textContent = message;
   el.className = error ? 'show error' : 'show';
   setTimeout(()=>el.className='',2600);
-}
-
-function localPatients(){
-  try{
-    const current = JSON.parse(localStorage.getItem('alegrare:sprint1') || '{}');
-    if(Array.isArray(current.patients) && current.patients.length) return current.patients;
-  }catch{}
-  return [
-    {name:'Camila Nogueira'}, {name:'Roberto Silva'}, {name:'Luana Costa'},
-    {name:'Marcos Vinicius'}, {name:'Ana Paula Rocha'}, {name:'Felipe Andrade'}
-  ];
 }
 
 async function session(){ return (await supabase.auth.getSession()).data.session; }
@@ -54,41 +43,18 @@ function modal(html){
 }
 function closeModal(){ $('#real-modal')?.remove(); }
 
-async function ensureLogin(next){
-  if(await session()){ next(); return; }
-  const m = modal(`
-    <div class="real-modal-head"><div><small>ACESSO SEGURO</small><h2>Entrar na Alegrare</h2><p>O upload real exige uma conta autenticada da clínica.</p></div><button data-real-close>×</button></div>
-    <form id="real-auth-form" class="real-form">
-      <label>E-mail<input type="email" name="email" required autocomplete="email"></label>
-      <label>Senha<input type="password" name="password" required minlength="6" autocomplete="current-password"></label>
-      <div class="real-actions"><button type="button" class="real-btn ghost" id="real-signup">Criar primeiro acesso</button><button class="real-btn primary">Entrar</button></div>
-      <p class="real-help">No primeiro acesso, a conta fica vinculada à clínica Alegrare. Se a confirmação de e-mail estiver ativa, confirme o e-mail antes de entrar.</p>
-    </form>`);
-  const form = $('#real-auth-form',m);
-  form.addEventListener('submit',async e=>{
-    e.preventDefault();
-    const fd=new FormData(form);
-    const {error}=await supabase.auth.signInWithPassword({email:String(fd.get('email')),password:String(fd.get('password'))});
-    if(error){toast(error.message,true);return;}
-    cachedProfile=null; closeModal(); toast('Acesso liberado.'); next();
-  });
-  $('#real-signup',m).addEventListener('click',async()=>{
-    const fd=new FormData(form); const email=String(fd.get('email')||''); const password=String(fd.get('password')||'');
-    if(!email || password.length<6){toast('Informe e-mail e senha com pelo menos 6 caracteres.',true);return;}
-    const {data,error}=await supabase.auth.signUp({email,password,options:{data:{clinic_name:'Alegrare',full_name:'Danielle'}}});
-    if(error){toast(error.message,true);return;}
-    if(data.session){cachedProfile=null;closeModal();toast('Primeiro acesso criado.');next();}
-    else toast('Conta criada. Confirme o e-mail e depois entre.');
-  });
-}
-
-function openUpload(){
-  ensureLogin(async()=>{
-    const patients=localPatients();
+async function openUpload(){
+    const currentSession=await session();
+    if(!currentSession){toast('Entre no painel para enviar documentos.',true);return;}
+    const currentProfile=await profile();
+    const result=await supabase.from('patients').select('id,full_name').eq('clinic_id',currentProfile.clinic_id).order('full_name');
+    if(result.error){toast('Não foi possível carregar os pacientes.',true);return;}
+    const patients=result.data||[];
+    if(!patients.length){toast('Cadastre um paciente antes de enviar um documento.',true);return;}
     const m=modal(`
       <div class="real-modal-head"><div><small>DOCUMENTO</small><h2>Enviar para assinatura</h2><p>Um fluxo só: escolha o arquivo, o paciente e quem precisa assinar.</p></div><button data-real-close>×</button></div>
       <form id="real-upload-form" class="real-form">
-        <label>Paciente<select name="patient" required><option value="">Selecione</option>${patients.map(p=>`<option>${esc(p.name)}</option>`).join('')}</select></label>
+        <label>Paciente<select name="patient" required><option value="">Selecione</option>${patients.map(p=>`<option value="${p.id}" data-name="${esc(p.full_name)}">${esc(p.full_name)}</option>`).join('')}</select></label>
         <label>Título do documento<input name="title" placeholder="Ex.: Termo de consentimento" required></label>
         <label>Arquivo<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.docx" required><small>PDF, imagem ou DOCX · até 20 MB</small></label>
         <fieldset><legend>Quem assina?</legend>
@@ -102,10 +68,10 @@ function openUpload(){
         <div class="real-actions"><button type="button" class="real-btn ghost" data-real-close>Cancelar</button><button class="real-btn primary" id="real-upload-submit">Enviar documento</button></div>
       </form>`);
     const form=$('#real-upload-form',m), patientContact=$('#real-patient-contact',m);
-    form.elements.signers.forEach(r=>r.addEventListener('change',()=>{patientContact.hidden=r.value==='professional'; const selected=form.elements.patient.value; if(!patientContact.hidden && !form.elements.patientSignerName.value) form.elements.patientSignerName.value=selected;}));
-    form.elements.patient.addEventListener('change',()=>{if(!patientContact.hidden) form.elements.patientSignerName.value=form.elements.patient.value;});
+    const selectedPatientName=()=>form.elements.patient.selectedOptions[0]?.dataset.name||'';
+    form.elements.signers.forEach(r=>r.addEventListener('change',()=>{patientContact.hidden=r.value==='professional'; if(!patientContact.hidden && !form.elements.patientSignerName.value) form.elements.patientSignerName.value=selectedPatientName();}));
+    form.elements.patient.addEventListener('change',()=>{if(!patientContact.hidden) form.elements.patientSignerName.value=selectedPatientName();});
     form.addEventListener('submit',uploadDocument);
-  });
 }
 
 async function uploadDocument(e){
@@ -118,11 +84,11 @@ async function uploadDocument(e){
   let path=null, docId=crypto.randomUUID();
   try{
     const s=await session(); const p=await profile(); if(!s||!p?.clinic_id) throw new Error('Sessão da clínica não encontrada.');
-    const patientName=String(fd.get('patient')); const title=String(fd.get('title')).trim(); const signersMode=String(fd.get('signers'));
+    const patientId=String(fd.get('patient')); const patientName=form.elements.patient.selectedOptions[0]?.dataset.name||''; const title=String(fd.get('title')).trim(); const signersMode=String(fd.get('signers'));
     path=`${p.clinic_id}/${docId}/${safeFile(file.name)}`;
     const uploaded=await supabase.storage.from('clinic-documents').upload(path,file,{contentType:file.type||undefined,upsert:false});
     if(uploaded.error) throw uploaded.error;
-    const inserted=await supabase.from('documents').insert({id:docId,clinic_id:p.clinic_id,patient_name:patientName,title,file_path:path,file_name:file.name,mime_type:file.type||null,file_size:file.size,uploaded_by:s.user.id}).select('id').single();
+    const inserted=await supabase.from('documents').insert({id:docId,clinic_id:p.clinic_id,patient_id:patientId,patient_name:patientName,title,file_path:path,file_name:file.name,mime_type:file.type||null,file_size:file.size,uploaded_by:s.user.id}).select('id').single();
     if(inserted.error) throw inserted.error;
     const signers=[]; let patientToken=null;
     if(signersMode==='professional'||signersMode==='both') signers.push({clinic_id:p.clinic_id,document_id:docId,signer_type:'professional',signer_user_id:s.user.id,signer_name:p.full_name||'Dra. Danielle'});
@@ -131,7 +97,7 @@ async function uploadDocument(e){
       signers.push({clinic_id:p.clinic_id,document_id:docId,signer_type:'patient',signer_name:String(fd.get('patientSignerName')||patientName).trim()||patientName,signing_token:patientToken});
     }
     const sIns=await supabase.from('document_signers').insert(signers); if(sIns.error) throw sIns.error;
-    closeModal(); await refreshDocuments();
+    closeModal(); await refreshDocuments(1);
     if(patientToken) showPatientLink(patientToken,title,patientName); else toast('Documento enviado para assinatura profissional.');
   }catch(err){
     console.error(err);
@@ -150,26 +116,43 @@ function showPatientLink(token,title,patient){
   $('#real-copy-link',m).addEventListener('click',async()=>{await navigator.clipboard.writeText(link);toast('Link copiado.');});
 }
 
-async function refreshDocuments(){
+function documentsPagination(){
+  const pages=Math.ceil(documentTotal/DOCUMENT_PAGE_SIZE);
+  if(!documentTotal)return '';
+  if(pages===1)return `<div class="real-pagination-note">${documentTotal} documento${documentTotal===1?'':'s'} em ordem cronológica.</div>`;
+  const visible=[];
+  for(let n=Math.max(1,documentPage-2);n<=Math.min(pages,documentPage+2);n++)visible.push(n);
+  if(!visible.includes(1))visible.unshift(1);
+  if(!visible.includes(pages))visible.push(pages);
+  const numbers=visible.map((n,index)=>`${index&&n>visible[index-1]+1?'<span>…</span>':''}<button class="real-page-number ${n===documentPage?'active':''}" data-doc-page="${n}" ${n===documentPage?'aria-current="page"':''}>${n}</button>`).join('');
+  return `<nav class="real-pagination" aria-label="Páginas de documentos"><button data-doc-page="${documentPage-1}" ${documentPage===1?'disabled':''}>Anterior</button><div>${numbers}</div><button data-doc-page="${documentPage+1}" ${documentPage===pages?'disabled':''}>Próxima</button><small>Página ${documentPage} de ${pages} · ${documentTotal} documentos</small></nav>`;
+}
+
+async function refreshDocuments(page=documentPage){
   const host=$('#real-documents-list'); if(!host) return;
   const s=await session();
-  if(!s){host.innerHTML='<div class="real-empty"><b>Upload seguro</b><p>Entre para enviar documentos e gerar links de assinatura.</p><button class="real-btn primary" data-real-login>Entrar</button></div>'; $('[data-real-login]',host)?.addEventListener('click',()=>ensureLogin(refreshDocuments));return;}
+  if(!s){host.innerHTML='<div class="real-empty"><p>Entre no painel para ver os documentos.</p></div>';return;}
   const p=await profile();
-  const {data,error}=await supabase.from('documents').select('id,title,patient_name,file_name,status,created_at,document_signers(id,signer_type,signer_name,status,signing_token,signed_at)').eq('clinic_id',p.clinic_id).order('created_at',{ascending:false}).limit(20);
+  const from=(page-1)*DOCUMENT_PAGE_SIZE,to=from+DOCUMENT_PAGE_SIZE-1;
+  const {data,error,count}=await supabase.from('documents').select('id,title,patient_name,file_name,status,created_at,document_signers(id,signer_type,signer_name,status,signing_token,signed_at)',{count:'exact'}).eq('clinic_id',p.clinic_id).order('created_at',{ascending:false}).range(from,to);
   if(error){host.innerHTML='<div class="real-empty"><p>Não foi possível carregar os documentos.</p></div>';return;}
+  documentTotal=count||0;
+  const pages=Math.max(1,Math.ceil(documentTotal/DOCUMENT_PAGE_SIZE));
+  documentPage=Math.min(Math.max(1,page),pages);
   if(!data?.length){host.innerHTML='<div class="real-empty"><b>Nenhum documento enviado</b><p>Use “Enviar documento” para começar.</p></div>';return;}
-  host.innerHTML=data.map(doc=>{
+  host.innerHTML=`${data.map(doc=>{
     const patient=doc.document_signers?.find(x=>x.signer_type==='patient');
     const professional=doc.document_signers?.find(x=>x.signer_type==='professional');
     const labels=[]; if(professional) labels.push(`Profissional: ${professional.status==='signed'?'assinado':'pendente'}`); if(patient) labels.push(`Paciente: ${patient.status==='signed'?'assinado':'pendente'}`);
     return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">PDF</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions">${professional?.status==='pending'?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
-  }).join('');
+  }).join('')}${documentsPagination()}`;
   host.querySelectorAll('[data-prof-sign]').forEach(b=>b.addEventListener('click',()=>signProfessional(b.dataset.profSign)));
   host.querySelectorAll('[data-copy-token]').forEach(b=>b.addEventListener('click',async()=>{await navigator.clipboard.writeText(patientLink(b.dataset.copyToken));toast('Link do paciente copiado.');}));
+  host.querySelectorAll('[data-doc-page]').forEach(b=>b.addEventListener('click',()=>refreshDocuments(Number(b.dataset.docPage))));
 }
 
 async function signProfessional(id){
-  const s=await session(); if(!s) return ensureLogin(()=>signProfessional(id));
+  const s=await session(); if(!s){toast('Sua sessão expirou. Entre novamente.',true);return;}
   const {error}=await supabase.from('document_signers').update({status:'signed',signed_at:new Date().toISOString(),signature_method:'authenticated_clinic_user'}).eq('id',id).eq('status','pending');
   if(error){toast(error.message,true);return;} toast('Assinatura profissional registrada.'); refreshDocuments();
 }
@@ -181,10 +164,6 @@ async function injectClinicUI(){
   if(!isDocs) return;
   injecting=true;
   try{
-    const actions=$('.page-head .head-actions',content) || $('.page-head',content);
-    if(actions && !$('#real-upload-button')){
-      const b=document.createElement('button'); b.id='real-upload-button'; b.className='real-btn primary'; b.textContent='Enviar documento'; b.addEventListener('click',openUpload); actions.appendChild(b);
-    }
     if(!$('#real-documents-card')){
       const card=document.createElement('section'); card.id='real-documents-card'; card.className='card real-documents-card';
       card.innerHTML='<div class="real-section-head"><div><small>ASSINATURAS</small><h2>Documentos enviados</h2><p>Um lugar para acompanhar profissional e paciente.</p></div></div><div id="real-documents-list"><div class="real-loading">Carregando...</div></div>';
@@ -222,5 +201,7 @@ async function renderPatientSigning(){
 const observer=new MutationObserver(()=>{ if(isPatientRoute()) renderPatientSigning(); else injectClinicUI(); });
 observer.observe(document.documentElement,{childList:true,subtree:true});
 window.addEventListener('hashchange',()=>setTimeout(()=>{ if(isPatientRoute()) renderPatientSigning(); else injectClinicUI(); },0));
+window.addEventListener('alegrare:rendered',injectClinicUI);
+window.addEventListener('alegrare:upload-document',openUpload);
 supabase.auth.onAuthStateChange(()=>{cachedProfile=null;setTimeout(refreshDocuments,0);});
 if(!(await renderPatientSigning())) injectClinicUI();
