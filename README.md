@@ -1,22 +1,24 @@
 # Painel Alegrare
 
-Painel administrativo e clínico da Alegrare Odontologia Especial.
+Painel administrativo da Alegrare Odontologia Especial.
 
-## Sprint 1 de diferenciação
+## Versão publicada
 
-- Central de Oportunidades
-- Dashboard inteligente
-- Timeline completa do paciente
-- Prescrições e fluxo de assinatura
-- Recuperação de pacientes
+A aplicação usa a versão conectada ao Supabase, com:
 
-## Identidade visual
+- autenticação real;
+- vínculo do usuário à clínica;
+- pacientes e agendamentos reais;
+- prescrições;
+- documentos privados e assinaturas;
+- notas fiscais;
+- persistência no Supabase com RLS.
 
-Baseada no Manual de Identidade da Alegrare: azul institucional `#2680B3`, azul luminoso `#089FD9`, laranja `#DC853D`, amarelo `#EAB43F` e grafite `#263038`.
+A aplicação não usa dados fictícios nem `localStorage` como banco de dados.
 
 ## Execução local
 
-O projeto é uma SPA estática, sem etapa de build obrigatória.
+É uma SPA estática, sem etapa de build obrigatória:
 
 ```bash
 python -m http.server 4173
@@ -24,6 +26,8 @@ python -m http.server 4173
 
 Abra `http://localhost:4173`.
 
-## Dados
+## Infraestrutura
 
-A versão de demonstração usa dados locais persistidos no navegador para permitir apresentação imediata. O esquema preparado para Supabase está em `supabase/migrations` e será usado na conexão de produção com Auth/RLS.
+- Vercel: painel-alegrare.vercel.app
+- Supabase: projeto efythbvsdbxrsibvkhmc
+- GitHub: xxkashimoxx/alegrare-systemv1
