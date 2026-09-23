@@ -1,322 +1,160 @@
-// Painel Alegrare — versão enxuta
-const STORE = 'alegrare:simple-v2';
+import { supabase } from './supabase-client.js';
+import { openAppointmentCare } from './appointment-care.js';
 
-const medications = [
-  { id: 'MED-0001', name: 'Amoxicilina', active: 'amoxicilina' },
-  { id: 'MED-0002', name: 'Azitromicina', active: 'azitromicina' },
-  { id: 'MED-0003', name: 'Ibuprofeno', active: 'ibuprofeno' },
-  { id: 'MED-0004', name: 'Paracetamol', active: 'paracetamol' },
-  { id: 'MED-0005', name: 'Dipirona', active: 'dipirona monoidratada' },
-  { id: 'MED-0006', name: 'Clorexidina', active: 'digluconato de clorexidina' },
-  { id: 'MED-0007', name: 'Metronidazol', active: 'metronidazol' },
-  { id: 'MED-0008', name: 'Dexametasona', active: 'dexametasona' }
-];
+const app = document.querySelector('#app');
+const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
+const nav = [['home','Visão geral'],['agenda','Agenda'],['patients','Pacientes'],['prescriptions','Receitas'],['documents','Assinaturas'],['fiscal','Notas fiscais']];
+let route = location.hash.replace('#/','').split('/')[0] || 'home';
+let session, profile, clinic, modal;
+let patients = [], appointments = [], prescriptions = [], medications = [];
+let documentsCount = 0, fiscalDocuments = [], selectedMeds = [], busy = false;
+const PAGE_SIZE = 12;
+let pageState = {agenda:1,prescriptions:1,fiscal:1};
+let pageTotals = {agenda:0,prescriptions:0,fiscal:0};
 
-const seed = {
-  patients: [
-    { id:'p1', name:'Paciente Exemplo A', phone:'—', last:'76 dias', treatment:'Clareamento', status:'Sem retorno', potential:1850 },
-    { id:'p2', name:'Paciente Exemplo B', phone:'—', last:'43 dias', treatment:'Implante', status:'Faltou e não reagendou', potential:2400 },
-    { id:'p3', name:'Paciente Exemplo C', phone:'—', last:'21 dias', treatment:'Facetas em resina', status:'Orçamento pendente', potential:3200 },
-    { id:'p4', name:'Paciente Exemplo D', phone:'—', last:'97 dias', treatment:'Reabilitação oral', status:'Tratamento interrompido', potential:5800 },
-    { id:'p5', name:'Paciente Exemplo E', phone:'—', last:'188 dias', treatment:'Limpeza preventiva', status:'Retorno vencido', potential:450 }
-  ],
-  opportunities: [
-    { id:'o1', patientId:'p4', reason:'Tratamento interrompido', value:5800, priority:'Alta', status:'Aberta' },
-    { id:'o2', patientId:'p3', reason:'Orçamento pendente', value:3200, priority:'Alta', status:'Aberta' },
-    { id:'o3', patientId:'p2', reason:'Falta sem reagendamento', value:2400, priority:'Alta', status:'Aberta' },
-    { id:'o4', patientId:'p1', reason:'Sem retorno há mais de 60 dias', value:1850, priority:'Média', status:'Aberta' },
-    { id:'o5', patientId:'p5', reason:'Retorno preventivo vencido', value:450, priority:'Média', status:'Aberta' }
-  ],
-  prescriptions: [
-    { id:'r1', patientId:'p2', title:'Orientações pós-implante', meds:['Amoxicilina'], status:'Assinada', signer:'Dra. Danielle' },
-    { id:'r2', patientId:'p1', title:'Orientações de clareamento', meds:[], status:'Aguardando assinatura', signer:null }
-  ],
-  documents: [
-    { id:'d1', patientId:'p2', name:'termo-implante.pdf', signerScope:'Paciente', status:'Aguardando paciente' }
-  ],
-  appointments: [
-    { id:'a1', patientId:'p1', date:'2026-09-23', start:'09:00', end:'10:00', title:'Clareamento', status:'Confirmado' },
-    { id:'a2', patientId:'p2', date:'2026-09-24', start:'14:00', end:'15:30', title:'Retorno do implante', status:'Confirmado' },
-    { id:'a3', patientId:'p3', date:'2026-09-25', start:'11:00', end:'12:00', title:'Avaliação estética', status:'Aguardando' }
-  ],
-  timeline: {
-    p1:[['28/08/2026','Mensagem de retorno preparada'],['16/06/2026','Sessão de clareamento realizada'],['02/06/2026','Avaliação inicial']],
-    p2:[['19/08/2026','Paciente não compareceu'],['19/07/2026','Procedimento de implante realizado'],['19/07/2026','Orientações assinadas']],
-    p3:[['22/08/2026','Orçamento enviado'],['10/08/2026','Avaliação estética']],
-    p4:[['26/05/2026','Tratamento interrompido'],['12/05/2026','Planejamento aprovado']],
-    p5:[['24/02/2026','Limpeza concluída'],['24/02/2026','Retorno recomendado em 6 meses']]
-  }
-};
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const initials = (name='') => name.split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase() || 'AL';
+const day = (v) => v ? new Intl.DateTimeFormat('pt-BR').format(new Date(v)) : 'Não informado';
+const hour = (v) => v ? new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(v)) : '';
+const patient = (id) => patients.find(p=>p.id===id);
+const label = (s) => ({scheduled:'Agendada',confirmed:'Confirmada',completed:'Concluída',cancelled:'Cancelada',no_show:'Faltou',draft:'Rascunho',pending_signature:'Aguardando assinatura',signed:'Assinada',active:'Ativo',inactive:'Inativo',nfse:'NFS-e',receipt:'Recibo',queued:'Na fila',issued:'Emitida',failed:'Falhou'}[s] || s || '—');
+const money = (v) => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 
-let state = load();
-let route = location.hash.replace('#/','') || 'home';
-let modal = null;
-let selectedMeds = [];
-
-function load(){
-  try { return Object.assign(structuredClone(seed), JSON.parse(localStorage.getItem(STORE) || '{}')); }
-  catch { return structuredClone(seed); }
-}
-function save(){ localStorage.setItem(STORE, JSON.stringify(state)); }
-function patient(id){ return state.patients.find(p=>p.id===id); }
-function money(v){ return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v); }
-function esc(v){ return String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function initials(name){ return name.split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase(); }
-function openOpp(){ return state.opportunities.filter(o=>o.status!=='Recuperada'); }
-function potential(){ return openOpp().reduce((s,o)=>s+o.value,0); }
-
-const nav = [
-  ['home','Início'],
-  ['agenda','Agenda'],
-  ['patients','Pacientes'],
-  ['prescriptions','Prescrições e documentos'],
-  ['opportunities','Oportunidades'],
-  ['recovery','Recuperação']
-];
-
-function shell(body){
-  return `<div class="shell">
-    <aside class="sidebar">
-      <button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button>
-      <nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}${r==='opportunities'?`<i>${openOpp().length}</i>`:''}</button>`).join('')}</nav>
-      <div class="side-note"><b>Versão simplificada</b><small>Menos telas. Ações mais claras.</small></div>
-    </aside>
-    <main>
-      <header class="top"><div><span>Alegrare</span><b>${nav.find(n=>n[0]===route)?.[1] || 'Início'}</b></div><button class="avatar">DD</button></header>
-      <div class="content">${body}</div>
-    </main>
-  </div>${modal ? renderModal() : ''}<div id="toast"></div>`;
+function toast(message,error=false){
+  let el=document.querySelector('#toast');
+  if(!el){el=document.createElement('div');el.id='toast';document.body.appendChild(el);}
+  el.textContent=message;el.className=error?'show error':'show';setTimeout(()=>el.className='',2600);
 }
 
-function pageHead(title, sub, action=''){
-  return `<section class="page-head"><div><h1>${title}</h1><p>${sub}</p></div>${action}</section>`;
+function loginScreen(message=''){
+  app.innerHTML=`<main class="login-page"><section class="login-panel">
+    <div class="login-brand"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></div>
+    <div class="login-copy"><small>GESTÃO CLÍNICA</small><h1>Compromisso com cada paciente.</h1><p>Entre para acessar agenda, pacientes, prescrições e documentos da clínica.</p></div>
+    <form id="login-form" class="login-form"><label>E-mail<input name="email" type="email" required autocomplete="email" placeholder="seu@email.com"></label><label>Senha<input name="password" type="password" required autocomplete="current-password" placeholder="Sua senha"></label>${message?`<p class="form-error">${esc(message)}</p>`:''}<button class="primary login-submit">Entrar no painel</button></form>
+    <p class="login-help">Acesso exclusivo para usuários autorizados pela clínica.</p>
+  </section><aside class="login-visual"><div><small>ALEGRARE</small><blockquote>“Cuidar bem também é acompanhar cada compromisso.”</blockquote><p>Um sistema criado ao redor da rotina da Danielle.</p></div></aside></main>`;
+  document.querySelector('#login-form').addEventListener('submit',signIn);
 }
 
-let calendarCursor = new Date('2026-09-23T08:00:00');
-let calendarDrag = null;
-const CAL_START = 8 * 60;
-const CAL_END = 20 * 60;
-const CAL_STEP = 30;
-const pad = n => String(n).padStart(2,'0');
-const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-const displayDate = d => new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(d).replace('.','');
-const weekStart = d => { const x=new Date(d); const day=x.getDay(); x.setDate(x.getDate()-(day===0?6:day-1)); x.setHours(0,0,0,0); return x; };
-const timeLabel = mins => `${pad(Math.floor(mins/60))}:${pad(mins%60)}`;
-
-function agenda(){
-  const start=weekStart(calendarCursor);
-  const days=Array.from({length:7},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d;});
-  const hours=Array.from({length:(CAL_END-CAL_START)/CAL_STEP},(_,i)=>CAL_START+i*CAL_STEP);
-  const events=state.appointments||[];
-  return `${pageHead('Agenda','Visualize a semana e crie horários clicando ou arrastando sobre o calendário.',`<div class="head-actions"><button class="secondary" data-action="calendar-prev">‹</button><button class="secondary" data-action="calendar-today">Hoje</button><button class="secondary" data-action="calendar-next">›</button><button class="primary" data-action="new-appointment">Novo agendamento</button></div>`)}
-  <section class="calendar-card">
-    <div class="calendar-toolbar"><div><b>${displayDate(days[0])} — ${displayDate(days[6])}</b><small>Semana de ${days[0].getFullYear()}</small></div><div class="calendar-hint">Clique em um horário ou arraste para selecionar a duração</div></div>
-    <div class="calendar-scroll"><div class="calendar-head"><div class="time-head"></div>${days.map(d=>`<div class="day-head ${isoDate(d)===isoDate(new Date())?'today':''}"><small>${new Intl.DateTimeFormat('pt-BR',{weekday:'short'}).format(d).replace('.','')}</small><b>${d.getDate()}</b></div>`).join('')}</div>
-    <div class="calendar-body"><div class="time-axis">${hours.filter(m=>m%60===0).map(m=>`<span style="top:${(m-CAL_START)/30*32}px">${timeLabel(m)}</span>`).join('')}</div>${days.map(d=>{const date=isoDate(d);const dayEvents=events.filter(e=>e.date===date);return `<div class="calendar-day" data-day="${date}">${hours.map(m=>`<div class="calendar-slot" data-day="${date}" data-time="${timeLabel(m)}"></div>`).join('')}${dayEvents.map(e=>{const top=(toMinutes(e.start)-CAL_START)/CAL_STEP*32;const height=Math.max(32,(toMinutes(e.end)-toMinutes(e.start))/CAL_STEP*32-4);const p=patient(e.patientId);return `<button class="calendar-event" data-action="open-appointment" data-id="${e.id}" style="top:${top}px;height:${height}px"><strong>${esc(e.start)} ${esc(e.title)}</strong><small>${esc(p?.name||'Paciente')} · ${esc(e.status)}</small></button>`}).join('')}</div>`}).join('')}</div></div>
-  </section>`;
-}
-function toMinutes(value){ const [h,m]=value.split(':').map(Number); return h*60+m; }
-function appointmentModal(draft={}){
-  const date=draft.date||isoDate(calendarCursor), patientId=draft.patientId||'', start=draft.start||'09:00', end=draft.end||'10:00';
-  return `<div class="modal-card"><div class="modal-head"><div><h2>Novo agendamento</h2><p>Defina o paciente, o dia e o intervalo selecionado.</p></div><button data-action="close">×</button></div>
-  <label>Paciente<select id="apt-patient"><option value="">Selecione</option>${state.patients.map(p=>`<option value="${p.id}" ${p.id===patientId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
-  <div class="form-grid"><label>Data<input id="apt-date" type="date" value="${date}"></label><label>Serviço<input id="apt-title" placeholder="Ex.: Avaliação" value="${esc(draft.title||'Consulta')}"></label><label>Início<input id="apt-start" type="time" value="${start}"></label><label>Fim<input id="apt-end" type="time" value="${end}"></label></div>
-  <label>Status<select id="apt-status"><option>Confirmado</option><option>Aguardando</option><option>Cancelado</option></select></label>
-  <div class="modal-actions"><button class="secondary" data-action="close">Cancelar</button><button class="primary" data-action="save-appointment">Salvar agendamento</button></div></div>`;
+async function signIn(e){
+  e.preventDefault();const form=e.currentTarget,button=form.querySelector('button'),fd=new FormData(form);
+  button.disabled=true;button.textContent='Entrando...';
+  const {error}=await supabase.auth.signInWithPassword({email:String(fd.get('email')).trim(),password:String(fd.get('password'))});
+  if(error){loginScreen('E-mail ou senha incorretos. Confira os dados e tente novamente.');return;}
+  await initialize();
 }
 
-function home(){
-  const attention = [...openOpp()].sort((a,b)=>b.value-a.value).slice(0,3);
-  return `${pageHead('Bom dia, Danielle.','Hoje o painel mostra só o que precisa de atenção.','<button class="primary" data-action="new-rx">Nova prescrição</button>')}
-  <section class="metrics">
-    <button data-route="opportunities"><small>Oportunidades abertas</small><strong>${openOpp().length}</strong><span>Ver pacientes que precisam de ação</span></button>
-    <button data-route="opportunities"><small>Valor potencial</small><strong>${money(potential())}</strong><span>Associado aos retornos em aberto</span></button>
-    <button data-route="prescriptions"><small>Assinaturas pendentes</small><strong>${state.prescriptions.filter(r=>r.status!=='Assinada').length + state.documents.filter(d=>d.status!=='Assinado').length}</strong><span>Profissional ou paciente</span></button>
-  </section>
-  <section class="card">
-    <div class="card-title"><div><h2>Precisa da sua atenção</h2><p>Três ações prioritárias. Sem excesso de informação.</p></div><button class="link" data-route="opportunities">Ver todas</button></div>
-    <div class="attention-list">${attention.map(o=>{const p=patient(o.patientId);return `<div class="attention-row"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(o.reason)}</small></div><strong>${money(o.value)}</strong><button class="secondary" data-action="recover" data-id="${o.id}">Recuperar paciente</button></div>`}).join('')}</div>
-  </section>`;
+async function loadWorkspace(){
+  const profileResult=await supabase.from('profiles').select('id,clinic_id,full_name,role').eq('id',session.user.id).single();
+  if(profileResult.error||!profileResult.data?.clinic_id) throw new Error('Seu usuário ainda não está vinculado à clínica.');
+  profile=profileResult.data;
+  const now=new Date().toISOString();
+  const results=await Promise.all([
+    supabase.from('clinics').select('id,name').eq('id',profile.clinic_id).single(),
+    supabase.from('patients').select('*').eq('clinic_id',profile.clinic_id).order('full_name'),
+    supabase.from('appointments').select('*').eq('clinic_id',profile.clinic_id).gte('ends_at',now).order('starts_at',{ascending:true}).limit(200),
+    supabase.from('appointments').select('*',{count:'exact'}).eq('clinic_id',profile.clinic_id).lt('ends_at',now).order('starts_at',{ascending:false}).range(0,PAGE_SIZE-1),
+    supabase.from('prescriptions').select('*,prescription_items(id,medication_id,medication_name,instructions,position)',{count:'exact'}).eq('clinic_id',profile.clinic_id).order('created_at',{ascending:false}).range(0,PAGE_SIZE-1),
+    supabase.from('medications').select('id,display_name,active_ingredient,presentation').eq('is_active',true).order('display_name').limit(200),
+    supabase.from('documents').select('*',{count:'exact',head:true}).eq('clinic_id',profile.clinic_id),
+    supabase.from('fiscal_documents').select('*',{count:'exact'}).eq('clinic_id',profile.clinic_id).order('issued_at',{ascending:false,nullsFirst:false}).order('created_at',{ascending:false}).range(0,PAGE_SIZE-1)
+  ]);
+  const failed=results.find(r=>r.error);if(failed) throw failed.error;
+  [clinic,patients,prescriptions,medications]=[results[0].data,results[1].data||[],results[4].data||[],results[5].data||[]];
+  appointments=[...(results[2].data||[]),...(results[3].data||[])];
+  documentsCount=results[6].count||0;
+  fiscalDocuments=results[7].data||[];
+  pageTotals={agenda:results[3].count||0,prescriptions:results[4].count||0,fiscal:results[7].count||0};
 }
 
-function patients(){
-  return `${pageHead('Pacientes','Abra um paciente para ver apenas o histórico que importa.')}
-  <section class="card patient-list">${state.patients.map(p=>`<button class="patient-row" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(p.treatment)} · última visita: ${p.last}</small></div><span class="status">${esc(p.status)}</span><i>›</i></button>`).join('')}</section>`;
+async function initialize(){
+  session=(await supabase.auth.getSession()).data.session;
+  if(!session){loginScreen();return;}
+  app.innerHTML='<main class="app-loading"><span>A</span><p>Preparando o painel da Alegrare...</p></main>';
+  try{await loadWorkspace();render();}
+  catch(error){console.error(error);app.innerHTML=`<main class="app-loading error-state"><span>!</span><h1>Não foi possível abrir o painel</h1><p>${esc(error.message)}</p><button class="primary" id="retry-load">Tentar novamente</button></main>`;document.querySelector('#retry-load').onclick=initialize;}
 }
 
-function prescriptions(){
-  return `${pageHead('Prescrições e documentos','Crie uma prescrição ou envie um arquivo para assinatura.','<div class="head-actions"><button class="secondary" data-action="upload-doc">Enviar documento</button><button class="primary" data-action="new-rx">Nova prescrição</button></div>')}
-  <div class="grid2">
-    <section class="card"><div class="card-title"><div><h2>Prescrições</h2><p>Medicamentos identificados enquanto você digita.</p></div></div>
-      <div class="simple-list">${state.prescriptions.map(r=>{const p=patient(r.patientId);return `<div class="simple-row"><div><b>${esc(r.title)}</b><small>${esc(p.name)}${r.meds?.length?' · '+r.meds.map(esc).join(', '):''}</small></div><span class="status">${esc(r.status)}</span>${r.status!=='Assinada'?`<button class="secondary" data-action="sign-rx" data-id="${r.id}">Assinar</button>`:''}</div>`}).join('')}</div>
-    </section>
-    <section class="card"><div class="card-title"><div><h2>Documentos enviados</h2><p>O signatário pode ser a profissional, o paciente ou ambos.</p></div></div>
-      <div class="simple-list">${state.documents.length?state.documents.map(d=>{const p=patient(d.patientId);return `<div class="simple-row"><div><b>${esc(d.name)}</b><small>${esc(p.name)} · assinatura: ${esc(d.signerScope)}</small></div><span class="status">${esc(d.status)}</span>${d.status!=='Assinado'?`<button class="secondary" data-action="advance-doc" data-id="${d.id}">Registrar assinatura</button>`:''}</div>`}).join(''):'<p class="empty">Nenhum documento enviado.</p>'}</div>
-    </section>
-  </div>`;
+function shell(content){
+  const title=nav.find(n=>n[0]===route)?.[1]||'Visão geral';
+  return `<div class="shell"><aside class="sidebar"><button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button><nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}</button>`).join('')}</nav><div class="side-note"><b>Compromisso com cada paciente</b><small>Uma rotina mais clara, humana e bem acompanhada.</small></div></aside><main><header class="top"><div><span>${esc(clinic?.name||'Alegrare')}</span><b>${esc(title)}</b></div><div class="account"><span><b>${esc(profile?.full_name||'Danielle')}</b><small>${esc(session?.user?.email||'')}</small></span><button class="avatar" data-action="account">${initials(profile?.full_name||'Danielle')}</button></div></header><div class="content">${content}</div></main></div>${modal?renderModal():''}<div id="toast"></div>`;
+}
+const pageHead=(title,sub,action='')=>`<section class="page-head"><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div>${action}</section>`;
+const empty=(title,text,action='')=>`<div class="empty-state"><span>+</span><h2>${esc(title)}</h2><p>${esc(text)}</p>${action}</div>`;
+const today=()=>{const now=new Date();return appointments.filter(a=>{const d=new Date(a.starts_at);return d.toDateString()===now.toDateString()&&a.status!=='cancelled';});};
+const upcoming=()=>appointments.filter(a=>new Date(a.ends_at)>=new Date()&&a.status!=='cancelled');
+function pagination(kind){const total=pageTotals[kind]||0,pages=Math.ceil(total/PAGE_SIZE),current=pageState[kind]||1;if(!total)return '';if(pages===1)return `<div class="pagination-note">${total} registro${total===1?'':'s'} em ordem cronológica.</div>`;const visible=[];for(let n=Math.max(1,current-2);n<=Math.min(pages,current+2);n++)visible.push(n);if(!visible.includes(1))visible.unshift(1);if(!visible.includes(pages))visible.push(pages);const numbers=visible.map((n,index)=>`${index&&n>visible[index-1]+1?'<span class="page-gap">…</span>':''}<button class="page-number ${n===current?'active':''}" data-action="page-${kind}" data-id="${n}" ${n===current?'aria-current="page"':''}>${n}</button>`).join('');return `<nav class="pagination" aria-label="Paginação"><button class="page-control" data-action="page-${kind}" data-id="${current-1}" ${current===1?'disabled':''}>Anterior</button><div class="page-numbers">${numbers}</div><button class="page-control" data-action="page-${kind}" data-id="${current+1}" ${current===pages?'disabled':''}>Próxima</button><small>Página ${current} de ${pages} · ${total} registros</small></nav>`;}
+
+async function loadPage(kind,page){const pages=Math.max(1,Math.ceil((pageTotals[kind]||0)/PAGE_SIZE));if(!Number.isInteger(page)||page<1||page>pages||page===pageState[kind]||busy)return;busy=true;const from=(page-1)*PAGE_SIZE,to=from+PAGE_SIZE-1;let result;if(kind==='agenda')result=await supabase.from('appointments').select('*',{count:'exact'}).eq('clinic_id',profile.clinic_id).lt('ends_at',new Date().toISOString()).order('starts_at',{ascending:false}).range(from,to);if(kind==='prescriptions')result=await supabase.from('prescriptions').select('*,prescription_items(id,medication_id,medication_name,instructions,position)',{count:'exact'}).eq('clinic_id',profile.clinic_id).order('created_at',{ascending:false}).range(from,to);if(kind==='fiscal')result=await supabase.from('fiscal_documents').select('*',{count:'exact'}).eq('clinic_id',profile.clinic_id).order('issued_at',{ascending:false,nullsFirst:false}).order('created_at',{ascending:false}).range(from,to);busy=false;if(!result||result.error){toast(result?.error?.message||'Não foi possível carregar esta página.',true);return;}pageState[kind]=page;pageTotals[kind]=result.count??pageTotals[kind];if(kind==='agenda'){const next=upcoming();appointments=[...next,...(result.data||[])];}if(kind==='prescriptions')prescriptions=result.data||[];if(kind==='fiscal')fiscalDocuments=result.data||[];render();window.scrollTo?.({top:0,behavior:'smooth'});}
+
+function appointmentRow(a){const p=patient(a.patient_id);return `<article class="appointment-row"><time><b>${hour(a.starts_at)}</b><small>${day(a.starts_at)}</small></time><span class="avatar soft">${initials(p?.full_name)}</span><div><b>${esc(p?.full_name||'Paciente')}</b><small>${esc(a.procedure_name||'Consulta')} · ${esc(label(a.status))}</small></div><div class="consultation-actions"><span class="status ${esc(a.status)}">${esc(label(a.status))}</span><button class="secondary" data-consultation="${esc(a.id)}">Gerenciar consulta</button></div></article>`;}
+
+function homePage(){const next=upcoming().slice(0,4),pending=prescriptions.filter(p=>p.status!=='signed').length;return `${pageHead(`Olá, ${profile?.full_name?.split(' ')[0]||'Danielle'}.`,'Aqui está o que merece sua atenção hoje.','<button class="primary" data-action="new-appointment">Novo compromisso</button>')}<section class="metrics"><button data-route="agenda"><small>Compromissos de hoje</small><strong>${today().length}</strong><span>Abra a agenda para organizar o dia</span></button><button data-route="patients"><small>Pacientes cadastrados</small><strong>${patients.length}</strong><span>Dados reais da clínica</span></button><button data-route="prescriptions"><small>Assinaturas pendentes</small><strong>${pending}</strong><span>Prescrições aguardando conclusão</span></button></section><section class="card"><div class="card-title"><div><h2>Próximos compromissos</h2><p>Agenda objetiva, sem ruído.</p></div><button class="link" data-route="agenda">Ver agenda</button></div>${next.length?`<div class="appointment-list">${next.map(appointmentRow).join('')}</div>`:empty('Agenda pronta para começar','Cadastre o primeiro compromisso da Danielle.','<button class="primary" data-action="new-appointment">Agendar agora</button>')}</section>`;}
+
+function agendaPage(){const now=new Date(),next=appointments.filter(a=>new Date(a.ends_at)>=now&&a.status!=='cancelled').sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)),history=appointments.filter(a=>new Date(a.ends_at)<now).sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at));return `${pageHead('Agenda','Organize os compromissos da clínica em ordem cronológica.','<button class="primary" data-action="new-appointment">Novo compromisso</button>')}<section class="card"><div class="card-title"><div><h2>Próximos compromissos</h2><p>O que vem agora aparece primeiro.</p></div></div>${next.length?`<div class="appointment-list">${next.map(appointmentRow).join('')}</div>`:empty('Nenhum compromisso próximo','Assim que você agendar, ele aparecerá aqui.','<button class="primary" data-action="new-appointment">Criar compromisso</button>')}</section>${history.length?`<section class="card history-card"><div class="card-title"><div><h2>Histórico de compromissos</h2><p>Do mais recente para o mais antigo.</p></div></div><div class="appointment-list">${history.map(appointmentRow).join('')}</div>${pagination('agenda')}</section>`:''}`;}
+
+function patientRow(p){const detail=[p.current_treatment,p.phone].filter(Boolean).join(' · ')||'Cadastro inicial';return `<button class="patient-row" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.full_name)}</span><div><b>${esc(p.full_name)}</b><small>${esc(detail)}</small></div><span class="status">${esc(label(p.status))}</span><i>›</i></button>`;}
+function patientsPage(){return `${pageHead('Pacientes','Cadastros ligados à agenda e às prescrições.','<button class="primary" data-action="new-patient">Novo paciente</button>')}<section class="card patient-list">${patients.length?patients.map(patientRow).join(''):empty('Nenhum paciente cadastrado','Comece pelo cadastro do primeiro paciente.','<button class="primary" data-action="new-patient">Cadastrar paciente</button>')}</section>`;}
+
+function prescriptionsPage(){const pending=prescriptions.filter(p=>p.status!=='signed').length;return `${pageHead('Receitas','Crie a receita, encontre o medicamento pelo nome e assine ao final.','<button class="primary" data-action="new-rx">Nova receita</button>')}<section class="summary-strip"><div><small>Receitas emitidas</small><b>${pageTotals.prescriptions}</b></div><div><small>Pendentes nesta página</small><b>${pending}</b></div><div><small>Catálogo disponível</small><b>${medications.length}</b></div></section><section class="card"><div class="card-title"><div><h2>Receitas emitidas</h2><p>Mais recentes primeiro. Use as páginas para consultar o histórico.</p></div></div>${prescriptions.length?`<div class="simple-list">${prescriptions.map(r=>{const p=patient(r.patient_id),meds=(r.prescription_items||[]).sort((a,b)=>a.position-b.position).map(i=>i.medication_name).join(', ');return `<article class="simple-row"><div><b>${esc(r.title)}</b><small>${esc(p?.full_name||'Paciente')}${meds?` · ${esc(meds)}`:''}</small></div><span class="status">${esc(label(r.status))}</span>${r.status!=='signed'?`<button class="secondary" data-action="sign-rx" data-id="${r.id}">Assinar</button>`:''}</article>`;}).join('')}</div>${pagination('prescriptions')}`:empty('Nenhuma receita criada','Comece selecionando o paciente e localizando o medicamento.','<button class="primary" data-action="new-rx">Criar receita</button>')}</section>`;}
+
+function documentsPage(){return `${pageHead('Documentos','Envie um arquivo e escolha se assinam Danielle, paciente ou os dois.','<button class="primary" data-action="upload-doc">Enviar documento</button>')}<section class="card document-intro"><div class="card-title"><div><h2>Assinaturas simples e rastreáveis</h2><p>O documento fica privado. Depois do upload, você acompanha a assinatura profissional e gera um link seguro para o paciente.</p></div></div><div class="document-choices"><span><b>Danielle</b><small>Assinatura dentro do painel</small></span><span><b>Paciente</b><small>Link próprio, sem login</small></span></div></section>`;}
+
+function fiscalRow(doc){const p=patient(doc.patient_id);return `<article class="simple-row fiscal-row"><div><b>${esc(label(doc.document_type))} · ${money(doc.amount)}</b><small>${esc(p?.full_name||'Documento sem paciente')} · ${doc.issued_at?esc(day(doc.issued_at)):'Sem data de emissão'}</small></div><span class="status ${esc(doc.status)}">${esc(label(doc.status))}</span>${doc.document_url?`<a class="secondary fiscal-link" href="${esc(doc.document_url)}" target="_blank" rel="noreferrer">Abrir</a>`:''}</article>`;}
+function fiscalPage(){const issued=fiscalDocuments.filter(d=>d.status==='issued').length;return `${pageHead('Notas fiscais','Recibos e NFS-e em ordem de emissão.','<button class="primary" data-action="new-fiscal">Registrar nota</button>')}<section class="summary-strip"><div><small>Documentos fiscais</small><b>${pageTotals.fiscal}</b></div><div><small>Emitidos nesta página</small><b>${issued}</b></div><div><small>Valor nesta página</small><b>${money(fiscalDocuments.reduce((sum,d)=>sum+Number(d.amount||0),0))}</b></div></section><section class="card"><div class="card-title"><div><h2>Recibos e notas fiscais</h2><p>Mais recentes primeiro. Os registros importados do Clinicorp permanecem disponíveis por página.</p></div></div>${fiscalDocuments.length?`<div class="simple-list">${fiscalDocuments.map(fiscalRow).join('')}</div>${pagination('fiscal')}`:empty('Nenhuma nota fiscal registrada','Registre a primeira nota da clínica.','<button class="primary" data-action="new-fiscal">Registrar nota</button>')}</section>`;}
+
+function patientModal(id){const p=patient(id),items=appointments.filter(a=>a.patient_id===id).slice(-5).reverse();return `<div class="modal-card wide"><div class="modal-head"><div><h2>${esc(p.full_name)}</h2><p>${esc(p.phone||'Telefone não informado')} · ${esc(p.email||'E-mail não informado')}</p></div><button data-action="close">×</button></div><div class="patient-summary"><div><small>Tratamento atual</small><b>${esc(p.current_treatment||'Não informado')}</b></div><div><small>Última visita</small><b>${day(p.last_visit_at)}</b></div><div><small>Status</small><b>${esc(label(p.status))}</b></div></div><h3>Compromissos recentes</h3>${items.length?`<div class="appointment-list compact">${items.map(appointmentRow).join('')}</div>`:'<p class="empty">Ainda não há compromissos para este paciente.</p>'}<div class="modal-actions"><button class="secondary" data-action="close">Fechar</button><button class="primary" data-action="new-rx-for" data-id="${p.id}">Criar prescrição</button></div></div>`;}
+
+function newPatientModal(){return `<div class="modal-card"><div class="modal-head"><div><h2>Novo paciente</h2><p>Cadastre somente o necessário. Complete os demais dados depois.</p></div><button data-action="close">×</button></div><form id="patient-form" class="data-form"><label>Nome completo<input name="full_name" required></label><div class="form-grid"><label>Telefone<input name="phone" inputmode="tel"></label><label>E-mail<input name="email" type="email"></label></div><label>Tratamento atual<input name="current_treatment" placeholder="Ex.: Clareamento"></label><label>Observações<textarea name="notes" rows="3"></textarea></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar paciente</button></div></form></div>`;}
+
+function appointmentModal(){const start=new Date(Date.now()+3600000);start.setMinutes(0,0,0);const end=new Date(start.getTime()+3600000),local=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);return `<div class="modal-card"><div class="modal-head"><div><h2>Novo compromisso</h2><p>Defina paciente, horário e motivo.</p></div><button data-action="close">×</button></div><form id="appointment-form" class="data-form"><label>Paciente<select name="patient_id" required><option value="">Selecione</option>${patients.map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}</select></label><label>Procedimento ou motivo<input name="procedure_name" required placeholder="Ex.: Avaliação"></label><div class="form-grid"><label>Início<input name="starts_at" type="datetime-local" required value="${local(start)}"></label><label>Término<input name="ends_at" type="datetime-local" required value="${local(end)}"></label></div><label>Observações<textarea name="notes" rows="3"></textarea></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar compromisso</button></div></form></div>`;}
+
+function fiscalModal(){return `<div class="modal-card"><div class="modal-head"><div><h2>Registrar nota fiscal</h2><p>Salve o documento e vincule-o ao paciente. A emissão municipal será conectada depois ao provedor fiscal.</p></div><button data-action="close">×</button></div><form id="fiscal-form" class="data-form"><label>Paciente<select name="patient_id"><option value="">Sem paciente vinculado</option>${patients.map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}</select></label><div class="form-grid"><label>Tipo<select name="document_type"><option value="nfse">NFS-e</option><option value="receipt">Recibo</option></select></label><label>Valor<input name="amount" type="number" min="0" step="0.01" required value="0"></label></div><div class="form-grid"><label>Status<select name="status"><option value="draft">Rascunho</option><option value="issued">Emitida</option></select></label><label>Data<input name="issued_at" type="date"></label></div><div class="form-grid"><label>Provedor<input name="provider" placeholder="Ex.: Prefeitura, eNotas"></label><label>Referência<input name="provider_reference" placeholder="Número ou código"></label></div><label>Link do documento<input name="document_url" type="url" placeholder="https://..."></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar registro</button></div></form></div>`;}
+
+function selectedMedications(){return selectedMeds.length?selectedMeds.map(m=>`<span><b>${esc(m.display_name)}</b><small>${esc(m.active_ingredient||'')}</small><button type="button" data-action="remove-med" data-id="${m.id}">×</button></span>`).join(''):'<small>Nenhum medicamento adicionado.</small>';}
+function prescriptionModal(patientId=''){return `<div class="modal-card"><div class="modal-head"><div><h2>Nova prescrição</h2><p>Digite duas letras para identificar o medicamento.</p></div><button data-action="close">×</button></div><form id="prescription-form" class="data-form"><label>Paciente<select name="patient_id" required><option value="">Selecione</option>${patients.map(p=>`<option value="${p.id}" ${p.id===patientId?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select></label><label>Título<input name="title" required placeholder="Ex.: Prescrição pós-operatória"></label><div class="med-field"><label>Medicamento<input id="med-search" autocomplete="off" placeholder="Digite ao menos 2 letras"></label><div id="med-suggestions" class="suggestions"></div></div><div id="selected-meds" class="selected-meds">${selectedMedications()}</div><label>Orientações<textarea name="body" rows="5" required placeholder="Posologia e orientações gerais"></textarea></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar prescrição</button></div></form></div>`;}
+
+function accountModal(){return `<div class="modal-card"><div class="modal-head"><div><h2>${esc(profile?.full_name||'Danielle')}</h2><p>${esc(session?.user?.email||'')}</p></div><button data-action="close">×</button></div><div class="info-box">Perfil: ${esc(profile?.role||'owner')} · Clínica: ${esc(clinic?.name||'Alegrare')}</div><div class="modal-actions"><button class="secondary" data-action="close">Continuar</button><button class="danger" data-action="logout">Sair</button></div></div>`;}
+
+function renderModal(){if(modal?.type==='patient')return `<div class="modal-backdrop"><div>${patientModal(modal.id)}</div></div>`;if(modal?.type==='new-patient')return `<div class="modal-backdrop"><div>${newPatientModal()}</div></div>`;if(modal?.type==='appointment')return `<div class="modal-backdrop"><div>${appointmentModal()}</div></div>`;if(modal?.type==='prescription')return `<div class="modal-backdrop"><div>${prescriptionModal(modal.patientId||'')}</div></div>`;if(modal?.type==='fiscal')return `<div class="modal-backdrop"><div>${fiscalModal()}</div></div>`;return `<div class="modal-backdrop"><div>${accountModal()}</div></div>`;}
+
+function render(){const pages={home:homePage,agenda:agendaPage,patients:patientsPage,prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};app.innerHTML=shell((pages[route]||homePage)());bind();window.dispatchEvent(new CustomEvent('alegrare:rendered'));}
+function bind(){document.querySelectorAll('[data-route]').forEach(el=>el.onclick=()=>location.hash=`#/${el.dataset.route}`);document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>action(el.dataset.action,el.dataset.id));document.querySelector('#patient-form')?.addEventListener('submit',savePatient);document.querySelector('#appointment-form')?.addEventListener('submit',saveAppointment);document.querySelector('#prescription-form')?.addEventListener('submit',savePrescription);document.querySelector('#fiscal-form')?.addEventListener('submit',saveFiscal);const search=document.querySelector('#med-search');if(search)search.oninput=()=>suggest(search.value);}
+
+function suggest(term){const box=document.querySelector('#med-suggestions'),q=term.trim().toLocaleLowerCase('pt-BR');if(!box||q.length<2){if(box){box.innerHTML='';box.classList.remove('open');}return;}const found=medications.filter(m=>m.display_name.toLocaleLowerCase('pt-BR').startsWith(q)||(m.active_ingredient||'').toLocaleLowerCase('pt-BR').startsWith(q)).slice(0,8);box.innerHTML=found.length?found.map(m=>`<button type="button" data-med-id="${m.id}"><b>${esc(m.display_name)}</b><small>${esc(m.active_ingredient||'Princípio ativo não informado')}</small></button>`).join(''):'<div class="no-result">Nenhum medicamento encontrado.</div>';box.classList.add('open');box.querySelectorAll('[data-med-id]').forEach(b=>b.onclick=()=>{const m=medications.find(x=>x.id===b.dataset.medId);if(m&&!selectedMeds.some(x=>x.id===m.id))selectedMeds.push(m);document.querySelector('#selected-meds').innerHTML=selectedMedications();document.querySelector('#med-search').value='';box.classList.remove('open');bind();});}
+
+async function savePatient(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,full_name:String(fd.get('full_name')).trim(),phone:String(fd.get('phone')).trim()||null,email:String(fd.get('email')).trim()||null,current_treatment:String(fd.get('current_treatment')).trim()||null,notes:String(fd.get('notes')).trim()||null};const {data,error}=await supabase.from('patients').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}patients.push(data);patients.sort((a,b)=>a.full_name.localeCompare(b.full_name,'pt-BR'));modal=null;render();toast('Paciente cadastrado.');}
+
+async function saveAppointment(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget),start=new Date(String(fd.get('starts_at'))),end=new Date(String(fd.get('ends_at')));if(end<=start){busy=false;toast('O término precisa ser depois do início.',true);return;}const payload={clinic_id:profile.clinic_id,patient_id:String(fd.get('patient_id')),professional_id:profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:String(fd.get('notes')).trim()||null,created_by:profile.id};const {data,error}=await supabase.from('appointments').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}appointments.push(data);appointments.sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));modal=null;location.hash='#/agenda';toast('Compromisso agendado.');}
+
+async function savePrescription(e){e.preventDefault();if(busy)return;if(!selectedMeds.length){toast('Adicione ao menos um medicamento.',true);return;}busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,patient_id:String(fd.get('patient_id')),title:String(fd.get('title')).trim(),body:String(fd.get('body')).trim(),status:'pending_signature',author_id:profile.id};const created=await supabase.from('prescriptions').insert(payload).select('*').single();if(created.error){busy=false;toast(created.error.message,true);return;}const items=selectedMeds.map((m,i)=>({clinic_id:profile.clinic_id,prescription_id:created.data.id,medication_id:m.id,medication_name:m.display_name,instructions:payload.body,position:i}));const itemResult=await supabase.from('prescription_items').insert(items).select('id,medication_id,medication_name,instructions,position');busy=false;if(itemResult.error){await supabase.from('prescriptions').delete().eq('id',created.data.id);toast(itemResult.error.message,true);return;}prescriptions.unshift({...created.data,prescription_items:itemResult.data});selectedMeds=[];modal=null;location.hash='#/prescriptions';render();toast('Prescrição criada e pronta para assinatura.');}
+
+async function saveFiscal(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget);const payload={clinic_id:profile.clinic_id,patient_id:String(fd.get('patient_id')||'')||null,document_type:String(fd.get('document_type')),amount:Number(fd.get('amount')||0),status:String(fd.get('status')),provider:String(fd.get('provider')).trim()||null,provider_reference:String(fd.get('provider_reference')).trim()||null,issued_at:fd.get('issued_at')?`${fd.get('issued_at')}T12:00:00-03:00`:null,document_url:String(fd.get('document_url')).trim()||null,metadata:{source:'manual_panel'},created_by:profile.id};const {data,error}=await supabase.from('fiscal_documents').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}fiscalDocuments.unshift(data);modal=null;render();toast('Registro fiscal salvo.');}
+
+async function signPrescription(id){
+  if(busy)return;busy=true;
+  const signature=await supabase.from('prescription_signatures').insert({clinic_id:profile.clinic_id,prescription_id:id,signer_id:profile.id,signer_name:profile.full_name||'Dra. Danielle',signature_type:'internal',provider:'Alegrare',metadata:{method:'authenticated_clinic_user'}}).select('id').single();
+  if(signature.error){busy=false;toast(signature.error.message,true);return;}
+  const {error}=await supabase.from('prescriptions').update({status:'signed'}).eq('id',id).eq('status','pending_signature');
+  if(error){await supabase.from('prescription_signatures').delete().eq('id',signature.data.id);busy=false;toast(error.message,true);return;}
+  busy=false;const item=prescriptions.find(p=>p.id===id);if(item)item.status='signed';render();toast('Assinatura eletrônica registrada.');
 }
 
-function opportunities(){
-  return `${pageHead('Oportunidades','Uma lista simples: paciente, motivo, valor e ação.')}
-  <section class="card"><div class="opp-list">${openOpp().sort((a,b)=>b.value-a.value).map(o=>{const p=patient(o.patientId);return `<div class="opp-row"><div class="opp-main"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(o.reason)}</small></div></div><strong>${money(o.value)}</strong><span class="priority ${o.priority==='Alta'?'high':''}">${o.priority}</span><button class="primary" data-action="recover" data-id="${o.id}">Recuperar paciente</button></div>`}).join('')}</div></section>`;
-}
+async function action(name,id){if(name==='close'){modal=null;selectedMeds=[];render();return;}if(name==='page-agenda'){await loadPage('agenda',Number(id));return;}if(name==='page-prescriptions'){await loadPage('prescriptions',Number(id));return;}if(name==='page-fiscal'){await loadPage('fiscal',Number(id));return;}if(name==='new-patient'){modal={type:'new-patient'};render();return;}if(name==='open-patient'){modal={type:'patient',id};render();return;}if(name==='new-appointment'){if(!patients.length){toast('Cadastre um paciente antes de agendar.',true);location.hash='#/patients';return;}modal={type:'appointment'};render();return;}if(name==='new-rx'||name==='new-rx-for'){if(!patients.length){toast('Cadastre um paciente antes de prescrever.',true);location.hash='#/patients';return;}selectedMeds=[];modal={type:'prescription',patientId:name==='new-rx-for'?id:''};render();return;}if(name==='new-fiscal'){modal={type:'fiscal'};render();return;}if(name==='remove-med'){selectedMeds=selectedMeds.filter(m=>m.id!==id);document.querySelector('#selected-meds').innerHTML=selectedMedications();bind();return;}if(name==='sign-rx'){await signPrescription(id);return;}if(name==='account'){modal={type:'account'};render();return;}if(name==='logout'){await supabase.auth.signOut();return;}if(name==='upload-doc')window.dispatchEvent(new CustomEvent('alegrare:upload-document'));}
 
-function recovery(){
-  const rows = openOpp().filter(o=>o.status==='Em contato' || o.status==='Aberta');
-  return `${pageHead('Recuperação','Acompanhe somente quem precisa voltar para a agenda.')}
-  <section class="card"><div class="recovery-list">${rows.map(o=>{const p=patient(o.patientId);return `<div class="opp-row"><div class="opp-main"><span class="avatar soft">${initials(p.name)}</span><div><b>${esc(p.name)}</b><small>${esc(o.reason)}</small></div></div><span class="status">${esc(o.status)}</span><button class="secondary" data-action="mark-contact" data-id="${o.id}">Registrar contato</button><button class="primary" data-action="mark-recovered" data-id="${o.id}">Marcar como recuperado</button></div>`}).join('')}</div></section>`;
-}
+window.addEventListener('hashchange',()=>{if(patientSigningRoute())return;route=location.hash.replace('#/','').split('/')[0]||'home';modal=null;selectedMeds=[];if(session)render();});
+supabase.auth.onAuthStateChange((event,next)=>{session=next;if(event==='SIGNED_OUT'&&!patientSigningRoute())loginScreen();});
+if(!patientSigningRoute())initialize();
 
-function patientModal(id){
-  const p=patient(id); const history=state.timeline[id]||[];
-  return `<div class="modal-card wide"><div class="modal-head"><div><h2>${esc(p.name)}</h2><p>${esc(p.treatment)} · ${esc(p.phone)}</p></div><button data-action="close">×</button></div>
-    <div class="patient-summary"><div><small>Status</small><b>${esc(p.status)}</b></div><div><small>Última visita</small><b>${p.last}</b></div><div><small>Valor relacionado</small><b>${money(p.potential)}</b></div></div>
-    <h3>Histórico do paciente</h3><div class="timeline">${history.map(h=>`<div><i></i><span><small>${h[0]}</small><b>${esc(h[1])}</b></span></div>`).join('')}</div>
-    <div class="modal-actions"><button class="secondary" data-action="close">Fechar</button><button class="primary" data-action="new-rx-for" data-id="${p.id}">Criar prescrição</button></div>
-  </div>`;
-}
-
-function rxModal(patientId=''){
-  const opts=state.patients.map(p=>`<option value="${p.id}" ${p.id===patientId?'selected':''}>${esc(p.name)}</option>`).join('');
-  return `<div class="modal-card"><div class="modal-head"><div><h2>Nova prescrição</h2><p>Digite o medicamento. O sistema identifica as opções a partir das primeiras letras.</p></div><button data-action="close">×</button></div>
-    <label>Paciente<select id="rx-patient"><option value="">Selecione</option>${opts}</select></label>
-    <label>Título<input id="rx-title" placeholder="Ex.: Orientações pós-procedimento"></label>
-    <div class="med-field"><label>Medicamento<input id="med-search" autocomplete="off" placeholder="Digite ao menos 2 letras"></label><div id="med-suggestions" class="suggestions"></div></div>
-    <div id="selected-meds" class="selected-meds">${renderSelectedMeds()}</div>
-    <label>Orientações<textarea id="rx-notes" rows="4" placeholder="Escreva as orientações da prescrição"></textarea></label>
-    <div class="modal-actions"><button class="secondary" data-action="close">Cancelar</button><button class="primary" data-action="save-rx">Salvar prescrição</button></div>
-  </div>`;
-}
-
-function uploadModal(){
-  return `<div class="modal-card"><div class="modal-head"><div><h2>Enviar documento</h2><p>Escolha o arquivo e quem precisa assinar.</p></div><button data-action="close">×</button></div>
-    <label>Paciente<select id="doc-patient"><option value="">Selecione</option>${state.patients.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
-    <label>Arquivo<input id="doc-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"></label>
-    <label>Quem precisa assinar?<select id="doc-signer"><option value="Profissional">Profissional</option><option value="Paciente">Paciente</option><option value="Profissional e paciente">Profissional e paciente</option></select></label>
-    <div class="info-box">O arquivo ficará vinculado ao paciente e com status de assinatura visível nesta tela.</div>
-    <div class="modal-actions"><button class="secondary" data-action="close">Cancelar</button><button class="primary" data-action="save-doc">Enviar documento</button></div>
-  </div>`;
-}
-
-function renderSelectedMeds(){
-  if(!selectedMeds.length) return '<small>Nenhum medicamento adicionado.</small>';
-  return selectedMeds.map(m=>`<span><b>${esc(m.name)}</b><small>${m.id}</small><button data-action="remove-med" data-id="${m.id}">×</button></span>`).join('');
-}
-
-function renderModal(){
-  let body='';
-  if(modal?.type==='patient') body=patientModal(modal.id);
-  if(modal?.type==='rx') body=rxModal(modal.patientId||'');
-  if(modal?.type==='upload') body=uploadModal();
-  if(modal?.type==='appointment') body=appointmentModal(modal.draft||{});
-  return `<div class="modal-backdrop"><div>${body}</div></div>`;
-}
-
-function render(){
-  const pages={home,agenda,patients,prescriptions,opportunities,recovery};
-  document.querySelector('#app').innerHTML = shell((pages[route]||home)());
-  bindDynamic();
-}
-
-function toast(msg){ const t=document.querySelector('#toast'); if(!t)return; t.textContent=msg; t.className='show'; setTimeout(()=>t.className='',2200); }
-
-function bindDynamic(){
-  document.querySelectorAll('[data-route]').forEach(el=>el.onclick=()=>{location.hash='#/'+el.dataset.route;});
-  document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>handle(el.dataset.action,el.dataset.id));
-  const search=document.querySelector('#med-search');
-  if(search) search.oninput=()=>showMedSuggestions(search.value);
-  bindCalendar();
-}
-
-function bindCalendar(){
-  const calendar=document.querySelector('.calendar-body'); if(!calendar)return;
-  calendar.querySelectorAll('.calendar-slot').forEach(slot=>{
-    slot.onpointerdown=e=>{ if(e.button!==0)return; calendarDrag={date:slot.dataset.day,start:slot.dataset.time,end:slot.dataset.time}; slot.setPointerCapture?.(e.pointerId); e.preventDefault(); };
-    slot.onpointerenter=()=>{ if(calendarDrag) calendarDrag.end=slot.dataset.time; };
-    slot.onpointerup=()=>{ if(!calendarDrag)return; const start=toMinutes(calendarDrag.start), end=Math.max(start+CAL_STEP,toMinutes(calendarDrag.end)+CAL_STEP); const draft={date:calendarDrag.date,start:calendarDrag.start,end:timeLabel(Math.min(CAL_END,end))}; calendarDrag=null; modal={type:'appointment',draft}; render(); };
+document.addEventListener('click',event=>{
+  const button=event.target.closest('[data-consultation]');
+  if(!button||!profile)return;
+  const appointment=appointments.find(item=>item.id===button.dataset.consultation);
+  if(!appointment)return;
+  openAppointmentCare(appointment,patient(appointment.patient_id),profile.clinic_id,async()=>{
+    modal=null;
+    pageState={agenda:1,prescriptions:1,fiscal:1};
+    try {await loadWorkspace();render();toast('Consulta atualizada.');}
+    catch {toast('Consulta salva. Atualize a página para recarregar a agenda.',true);}
   });
-  document.onpointerup=()=>{calendarDrag=null;};
-}
-
-function showMedSuggestions(term){
-  const box=document.querySelector('#med-suggestions'); if(!box)return;
-  const q=term.trim().toLowerCase();
-  if(q.length<2){ box.innerHTML=''; box.classList.remove('open'); return; }
-  const found=medications.filter(m=>m.name.toLowerCase().startsWith(q)||m.active.toLowerCase().startsWith(q)).slice(0,6);
-  box.innerHTML=found.length?found.map(m=>`<button data-med-id="${m.id}"><b>${esc(m.name)}</b><small>${m.id} · ${esc(m.active)}</small></button>`).join(''):'<div class="no-result">Nenhum medicamento encontrado.</div>';
-  box.classList.add('open');
-  box.querySelectorAll('[data-med-id]').forEach(btn=>btn.onclick=()=>{
-    const med=medications.find(m=>m.id===btn.dataset.medId);
-    if(!selectedMeds.some(m=>m.id===med.id)) selectedMeds.push(med);
-    document.querySelector('#selected-meds').innerHTML=renderSelectedMeds();
-    document.querySelector('#med-search').value=''; box.innerHTML=''; box.classList.remove('open');
-    bindDynamic();
-  });
-}
-
-function handle(action,id){
-  if(action==='close'){ modal=null; selectedMeds=[]; render(); return; }
-  if(action==='calendar-prev'){ calendarCursor.setDate(calendarCursor.getDate()-7); render(); return; }
-  if(action==='calendar-next'){ calendarCursor.setDate(calendarCursor.getDate()+7); render(); return; }
-  if(action==='calendar-today'){ calendarCursor=new Date(); render(); return; }
-  if(action==='new-appointment'){ modal={type:'appointment',draft:{date:isoDate(calendarCursor)}}; render(); return; }
-  if(action==='open-appointment'){ const item=(state.appointments||[]).find(a=>a.id===id); if(item){modal={type:'appointment',draft:item,editing:id};render();} return; }
-  if(action==='open-patient'){ modal={type:'patient',id}; render(); return; }
-  if(action==='new-rx'){ selectedMeds=[]; modal={type:'rx'}; render(); return; }
-  if(action==='new-rx-for'){ selectedMeds=[]; modal={type:'rx',patientId:id}; render(); return; }
-  if(action==='upload-doc'){ modal={type:'upload'}; render(); return; }
-  if(action==='remove-med'){ selectedMeds=selectedMeds.filter(m=>m.id!==id); document.querySelector('#selected-meds').innerHTML=renderSelectedMeds(); bindDynamic(); return; }
-  if(action==='save-rx'){
-    const patientId=document.querySelector('#rx-patient').value;
-    const title=document.querySelector('#rx-title').value.trim();
-    if(!patientId||!title){ toast('Selecione o paciente e informe um título.'); return; }
-    state.prescriptions.unshift({id:'r'+Date.now(),patientId,title,meds:selectedMeds.map(m=>m.name),status:'Aguardando assinatura',signer:null});
-    state.timeline[patientId]=state.timeline[patientId]||[];
-    state.timeline[patientId].unshift(['Hoje','Prescrição criada']);
-    save(); modal=null; selectedMeds=[]; route='prescriptions'; location.hash='#/prescriptions'; render(); toast('Prescrição criada.'); return;
-  }
-  if(action==='save-doc'){
-    const patientId=document.querySelector('#doc-patient').value;
-    const file=document.querySelector('#doc-file').files[0];
-    const signerScope=document.querySelector('#doc-signer').value;
-    if(!patientId||!file){ toast('Selecione o paciente e o arquivo.'); return; }
-    let status=signerScope==='Paciente'?'Aguardando paciente':signerScope==='Profissional'?'Aguardando profissional':'Aguardando ambos';
-    state.documents.unshift({id:'d'+Date.now(),patientId,name:file.name,signerScope,status});
-    state.timeline[patientId]=state.timeline[patientId]||[];
-    state.timeline[patientId].unshift(['Hoje',`Documento enviado: ${file.name}`]);
-    save(); modal=null; render(); toast('Documento vinculado ao paciente.'); return;
-  }
-  if(action==='save-appointment'){
-    const patientId=document.querySelector('#apt-patient').value;
-    const date=document.querySelector('#apt-date').value;
-    const title=document.querySelector('#apt-title').value.trim()||'Consulta';
-    const start=document.querySelector('#apt-start').value;
-    const end=document.querySelector('#apt-end').value;
-    const status=document.querySelector('#apt-status').value;
-    if(!patientId||!date||!start||!end){toast('Preencha paciente, data e horários.');return;}
-    if(toMinutes(end)<=toMinutes(start)){toast('O horário final deve ser depois do início.');return;}
-    state.appointments=state.appointments||[];
-    const item={id:modal.editing||`a${Date.now()}`,patientId,date,start,end,title,status};
-    const index=state.appointments.findIndex(a=>a.id===item.id);
-    if(index>=0) state.appointments[index]=item; else state.appointments.push(item);
-    save(); modal=null; route='agenda'; location.hash='#/agenda'; render(); toast(index>=0?'Agendamento atualizado.':'Agendamento criado.'); return;
-  }
-  if(action==='sign-rx'){
-    const r=state.prescriptions.find(x=>x.id===id); if(r){r.status='Assinada';r.signer='Dra. Danielle';save();render();toast('Assinatura registrada.');} return;
-  }
-  if(action==='advance-doc'){
-    const d=state.documents.find(x=>x.id===id); if(d){d.status='Assinado';save();render();toast('Assinatura registrada no documento.');} return;
-  }
-  if(action==='recover'){
-    const o=state.opportunities.find(x=>x.id===id); if(o){o.status='Em contato';save();route='recovery';location.hash='#/recovery';render();toast('Paciente adicionado à recuperação.');} return;
-  }
-  if(action==='mark-contact'){
-    const o=state.opportunities.find(x=>x.id===id); if(o){o.status='Em contato';save();render();toast('Contato registrado.');} return;
-  }
-  if(action==='mark-recovered'){
-    const o=state.opportunities.find(x=>x.id===id); if(o){o.status='Recuperada';const p=patient(o.patientId);if(p)p.status='Reagendado';save();render();toast('Paciente marcado como recuperado.');} return;
-  }
-}
-
-window.addEventListener('hashchange',()=>{route=location.hash.replace('#/','')||'home';modal=null;selectedMeds=[];render();});
-render();
+});
