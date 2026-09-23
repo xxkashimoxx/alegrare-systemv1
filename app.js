@@ -14,11 +14,11 @@ const medications = [
 
 const seed = {
   patients: [
-    { id:'p1', name:'Camila Nogueira', phone:'(21) 99854-3012', last:'76 dias', treatment:'Clareamento', status:'Sem retorno', potential:1850 },
-    { id:'p2', name:'Roberto Silva', phone:'(21) 99104-7820', last:'43 dias', treatment:'Implante', status:'Faltou e não reagendou', potential:2400 },
-    { id:'p3', name:'Luana Costa', phone:'(21) 99771-5421', last:'21 dias', treatment:'Facetas em resina', status:'Orçamento pendente', potential:3200 },
-    { id:'p4', name:'Marcos Vinicius', phone:'(21) 99202-1056', last:'97 dias', treatment:'Reabilitação oral', status:'Tratamento interrompido', potential:5800 },
-    { id:'p5', name:'Ana Paula Rocha', phone:'(21) 99612-0041', last:'188 dias', treatment:'Limpeza preventiva', status:'Retorno vencido', potential:450 }
+    { id:'p1', name:'Paciente Exemplo A', phone:'—', last:'76 dias', treatment:'Clareamento', status:'Sem retorno', potential:1850 },
+    { id:'p2', name:'Paciente Exemplo B', phone:'—', last:'43 dias', treatment:'Implante', status:'Faltou e não reagendou', potential:2400 },
+    { id:'p3', name:'Paciente Exemplo C', phone:'—', last:'21 dias', treatment:'Facetas em resina', status:'Orçamento pendente', potential:3200 },
+    { id:'p4', name:'Paciente Exemplo D', phone:'—', last:'97 dias', treatment:'Reabilitação oral', status:'Tratamento interrompido', potential:5800 },
+    { id:'p5', name:'Paciente Exemplo E', phone:'—', last:'188 dias', treatment:'Limpeza preventiva', status:'Retorno vencido', potential:450 }
   ],
   opportunities: [
     { id:'o1', patientId:'p4', reason:'Tratamento interrompido', value:5800, priority:'Alta', status:'Aberta' },
@@ -33,6 +33,11 @@ const seed = {
   ],
   documents: [
     { id:'d1', patientId:'p2', name:'termo-implante.pdf', signerScope:'Paciente', status:'Aguardando paciente' }
+  ],
+  appointments: [
+    { id:'a1', patientId:'p1', date:'2026-09-23', start:'09:00', end:'10:00', title:'Clareamento', status:'Confirmado' },
+    { id:'a2', patientId:'p2', date:'2026-09-24', start:'14:00', end:'15:30', title:'Retorno do implante', status:'Confirmado' },
+    { id:'a3', patientId:'p3', date:'2026-09-25', start:'11:00', end:'12:00', title:'Avaliação estética', status:'Aguardando' }
   ],
   timeline: {
     p1:[['28/08/2026','Mensagem de retorno preparada'],['16/06/2026','Sessão de clareamento realizada'],['02/06/2026','Avaliação inicial']],
@@ -62,6 +67,7 @@ function potential(){ return openOpp().reduce((s,o)=>s+o.value,0); }
 
 const nav = [
   ['home','Início'],
+  ['agenda','Agenda'],
   ['patients','Pacientes'],
   ['prescriptions','Prescrições e documentos'],
   ['opportunities','Oportunidades'],
@@ -84,6 +90,39 @@ function shell(body){
 
 function pageHead(title, sub, action=''){
   return `<section class="page-head"><div><h1>${title}</h1><p>${sub}</p></div>${action}</section>`;
+}
+
+let calendarCursor = new Date('2026-09-23T08:00:00');
+let calendarDrag = null;
+const CAL_START = 8 * 60;
+const CAL_END = 20 * 60;
+const CAL_STEP = 30;
+const pad = n => String(n).padStart(2,'0');
+const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const displayDate = d => new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(d).replace('.','');
+const weekStart = d => { const x=new Date(d); const day=x.getDay(); x.setDate(x.getDate()-(day===0?6:day-1)); x.setHours(0,0,0,0); return x; };
+const timeLabel = mins => `${pad(Math.floor(mins/60))}:${pad(mins%60)}`;
+
+function agenda(){
+  const start=weekStart(calendarCursor);
+  const days=Array.from({length:7},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d;});
+  const hours=Array.from({length:(CAL_END-CAL_START)/CAL_STEP},(_,i)=>CAL_START+i*CAL_STEP);
+  const events=state.appointments||[];
+  return `${pageHead('Agenda','Visualize a semana e crie horários clicando ou arrastando sobre o calendário.',`<div class="head-actions"><button class="secondary" data-action="calendar-prev">‹</button><button class="secondary" data-action="calendar-today">Hoje</button><button class="secondary" data-action="calendar-next">›</button><button class="primary" data-action="new-appointment">Novo agendamento</button></div>`)}
+  <section class="calendar-card">
+    <div class="calendar-toolbar"><div><b>${displayDate(days[0])} — ${displayDate(days[6])}</b><small>Semana de ${days[0].getFullYear()}</small></div><div class="calendar-hint">Clique em um horário ou arraste para selecionar a duração</div></div>
+    <div class="calendar-scroll"><div class="calendar-head"><div class="time-head"></div>${days.map(d=>`<div class="day-head ${isoDate(d)===isoDate(new Date())?'today':''}"><small>${new Intl.DateTimeFormat('pt-BR',{weekday:'short'}).format(d).replace('.','')}</small><b>${d.getDate()}</b></div>`).join('')}</div>
+    <div class="calendar-body"><div class="time-axis">${hours.filter(m=>m%60===0).map(m=>`<span style="top:${(m-CAL_START)/30*32}px">${timeLabel(m)}</span>`).join('')}</div>${days.map(d=>{const date=isoDate(d);const dayEvents=events.filter(e=>e.date===date);return `<div class="calendar-day" data-day="${date}">${hours.map(m=>`<div class="calendar-slot" data-day="${date}" data-time="${timeLabel(m)}"></div>`).join('')}${dayEvents.map(e=>{const top=(toMinutes(e.start)-CAL_START)/CAL_STEP*32;const height=Math.max(32,(toMinutes(e.end)-toMinutes(e.start))/CAL_STEP*32-4);const p=patient(e.patientId);return `<button class="calendar-event" data-action="open-appointment" data-id="${e.id}" style="top:${top}px;height:${height}px"><strong>${esc(e.start)} ${esc(e.title)}</strong><small>${esc(p?.name||'Paciente')} · ${esc(e.status)}</small></button>`}).join('')}</div>`}).join('')}</div></div>
+  </section>`;
+}
+function toMinutes(value){ const [h,m]=value.split(':').map(Number); return h*60+m; }
+function appointmentModal(draft={}){
+  const date=draft.date||isoDate(calendarCursor), patientId=draft.patientId||'', start=draft.start||'09:00', end=draft.end||'10:00';
+  return `<div class="modal-card"><div class="modal-head"><div><h2>Novo agendamento</h2><p>Defina o paciente, o dia e o intervalo selecionado.</p></div><button data-action="close">×</button></div>
+  <label>Paciente<select id="apt-patient"><option value="">Selecione</option>${state.patients.map(p=>`<option value="${p.id}" ${p.id===patientId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
+  <div class="form-grid"><label>Data<input id="apt-date" type="date" value="${date}"></label><label>Serviço<input id="apt-title" placeholder="Ex.: Avaliação" value="${esc(draft.title||'Consulta')}"></label><label>Início<input id="apt-start" type="time" value="${start}"></label><label>Fim<input id="apt-end" type="time" value="${end}"></label></div>
+  <label>Status<select id="apt-status"><option>Confirmado</option><option>Aguardando</option><option>Cancelado</option></select></label>
+  <div class="modal-actions"><button class="secondary" data-action="close">Cancelar</button><button class="primary" data-action="save-appointment">Salvar agendamento</button></div></div>`;
 }
 
 function home(){
@@ -169,11 +208,12 @@ function renderModal(){
   if(modal?.type==='patient') body=patientModal(modal.id);
   if(modal?.type==='rx') body=rxModal(modal.patientId||'');
   if(modal?.type==='upload') body=uploadModal();
+  if(modal?.type==='appointment') body=appointmentModal(modal.draft||{});
   return `<div class="modal-backdrop"><div>${body}</div></div>`;
 }
 
 function render(){
-  const pages={home,patients,prescriptions,opportunities,recovery};
+  const pages={home,agenda,patients,prescriptions,opportunities,recovery};
   document.querySelector('#app').innerHTML = shell((pages[route]||home)());
   bindDynamic();
 }
@@ -185,6 +225,17 @@ function bindDynamic(){
   document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>handle(el.dataset.action,el.dataset.id));
   const search=document.querySelector('#med-search');
   if(search) search.oninput=()=>showMedSuggestions(search.value);
+  bindCalendar();
+}
+
+function bindCalendar(){
+  const calendar=document.querySelector('.calendar-body'); if(!calendar)return;
+  calendar.querySelectorAll('.calendar-slot').forEach(slot=>{
+    slot.onpointerdown=e=>{ if(e.button!==0)return; calendarDrag={date:slot.dataset.day,start:slot.dataset.time,end:slot.dataset.time}; slot.setPointerCapture?.(e.pointerId); e.preventDefault(); };
+    slot.onpointerenter=()=>{ if(calendarDrag) calendarDrag.end=slot.dataset.time; };
+    slot.onpointerup=()=>{ if(!calendarDrag)return; const start=toMinutes(calendarDrag.start), end=Math.max(start+CAL_STEP,toMinutes(calendarDrag.end)+CAL_STEP); const draft={date:calendarDrag.date,start:calendarDrag.start,end:timeLabel(Math.min(CAL_END,end))}; calendarDrag=null; modal={type:'appointment',draft}; render(); };
+  });
+  document.onpointerup=()=>{calendarDrag=null;};
 }
 
 function showMedSuggestions(term){
@@ -205,6 +256,11 @@ function showMedSuggestions(term){
 
 function handle(action,id){
   if(action==='close'){ modal=null; selectedMeds=[]; render(); return; }
+  if(action==='calendar-prev'){ calendarCursor.setDate(calendarCursor.getDate()-7); render(); return; }
+  if(action==='calendar-next'){ calendarCursor.setDate(calendarCursor.getDate()+7); render(); return; }
+  if(action==='calendar-today'){ calendarCursor=new Date(); render(); return; }
+  if(action==='new-appointment'){ modal={type:'appointment',draft:{date:isoDate(calendarCursor)}}; render(); return; }
+  if(action==='open-appointment'){ const item=(state.appointments||[]).find(a=>a.id===id); if(item){modal={type:'appointment',draft:item,editing:id};render();} return; }
   if(action==='open-patient'){ modal={type:'patient',id}; render(); return; }
   if(action==='new-rx'){ selectedMeds=[]; modal={type:'rx'}; render(); return; }
   if(action==='new-rx-for'){ selectedMeds=[]; modal={type:'rx',patientId:id}; render(); return; }
@@ -229,6 +285,21 @@ function handle(action,id){
     state.timeline[patientId]=state.timeline[patientId]||[];
     state.timeline[patientId].unshift(['Hoje',`Documento enviado: ${file.name}`]);
     save(); modal=null; render(); toast('Documento vinculado ao paciente.'); return;
+  }
+  if(action==='save-appointment'){
+    const patientId=document.querySelector('#apt-patient').value;
+    const date=document.querySelector('#apt-date').value;
+    const title=document.querySelector('#apt-title').value.trim()||'Consulta';
+    const start=document.querySelector('#apt-start').value;
+    const end=document.querySelector('#apt-end').value;
+    const status=document.querySelector('#apt-status').value;
+    if(!patientId||!date||!start||!end){toast('Preencha paciente, data e horários.');return;}
+    if(toMinutes(end)<=toMinutes(start)){toast('O horário final deve ser depois do início.');return;}
+    state.appointments=state.appointments||[];
+    const item={id:modal.editing||`a${Date.now()}`,patientId,date,start,end,title,status};
+    const index=state.appointments.findIndex(a=>a.id===item.id);
+    if(index>=0) state.appointments[index]=item; else state.appointments.push(item);
+    save(); modal=null; route='agenda'; location.hash='#/agenda'; render(); toast(index>=0?'Agendamento atualizado.':'Agendamento criado.'); return;
   }
   if(action==='sign-rx'){
     const r=state.prescriptions.find(x=>x.id===id); if(r){r.status='Assinada';r.signer='Dra. Danielle';save();render();toast('Assinatura registrada.');} return;
