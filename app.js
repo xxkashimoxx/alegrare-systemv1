@@ -9,7 +9,7 @@ let route = location.hash.replace('#/','').split('/')[0] || 'home';
 let session, profile, clinic, modal;
 let patients = [], appointments = [], prescriptions = [], medications = [];
 let documentsCount = 0, fiscalDocuments = [], selectedMeds = [], busy = false;
-let agendaCalendar = null, calendarSearchTerm = '', calendarExpanded = false;
+let agendaCalendar = null, calendarSearchTerm = '', calendarPatientId = '', calendarExpanded = false;
 const PAGE_SIZE = 12;
 let pageState = {agenda:1,prescriptions:1,fiscal:1};
 let pageTotals = {agenda:0,prescriptions:0,fiscal:0};
@@ -98,11 +98,11 @@ function agendaPage(){
   const header=pageHead('Agenda','Veja a semana inteira, navegue pelos meses e marque um horário direto no calendário.','<button class="primary" data-action="new-appointment">Novo compromisso</button>');
   const calendar='<section class="card calendar-card" id="calendar-card">'+
     '<div class="calendar-tools">'+
-      '<label class="calendar-search" for="agenda-patient-search"><span>Buscar paciente na agenda</span><input id="agenda-patient-search" type="search" autocomplete="off" value="'+esc(calendarSearchTerm)+'" placeholder="Nome ou telefone do paciente"></label>'+
+      '<div class="calendar-search-wrap"><label class="calendar-search" for="agenda-patient-search"><span>Buscar paciente cadastrado</span><input id="agenda-patient-search" type="search" autocomplete="off" aria-autocomplete="list" aria-controls="agenda-patient-results" value="'+esc(calendarSearchTerm)+'" placeholder="Nome ou telefone do paciente"></label><div id="agenda-patient-results" class="patient-search-results" role="listbox" aria-label="Pacientes encontrados"></div></div>'+
       '<div class="calendar-tools-actions"><span id="agenda-search-status" role="status">Carregando compromissos…</span><button type="button" class="secondary" id="calendar-expand" aria-pressed="'+String(calendarExpanded)+'">'+(calendarExpanded?'Reduzir agenda':'Expandir agenda')+'</button></div>'+
     '</div>'+
     '<div class="calendar-scroll"><div id="agenda-calendar" aria-label="Agenda interativa da clínica"></div></div>'+
-    '<div class="calendar-legend" aria-label="Legenda de situações"><span><i class="scheduled"></i>Agendada</span><span><i class="confirmed"></i>Confirmada</span><span><i class="completed"></i>Concluída</span><span><i class="no-show"></i>Faltou</span><span><i class="cancelled"></i>Cancelada</span><small>Clique ou arraste sobre um horário para agendar. Arraste um compromisso para remarcar.</small></div>'+
+    '<div class="calendar-legend" aria-label="Legenda de situações"><span><i class="scheduled"></i>Agendada</span><span><i class="confirmed"></i>Confirmada</span><span><i class="completed"></i>Concluída</span><span><i class="no-show"></i>Faltou</span><span><i class="cancelled"></i>Cancelada</span><small>Pesquise e selecione um paciente; depois clique ou arraste no horário desejado para agendar. Arraste um compromisso para remarcar.</small></div>'+
   '</section>';
   const old=history.length?'<section class="card history-card"><div class="card-title"><div><h2>Histórico de compromissos</h2><p>Do mais recente para o mais antigo.</p></div></div><div class="appointment-list">'+history.map(appointmentRow).join('')+'</div>'+pagination('agenda')+'</section>':'';
   return header+calendar+old;
@@ -273,17 +273,19 @@ function render(){
       clinicId:profile.clinic_id,
       patients,
       loadAppointments:fetchCalendarAppointments,
-      onCreate:(start,end)=>{calendarExpanded=false;modal={type:'appointment',startsAt:start.toISOString(),endsAt:end.toISOString()};render();document.querySelector('#appointment-patient-search')?.focus();},
+      onCreate:(start,end,patientId)=>{calendarExpanded=false;modal={type:'appointment',patientId:patientId||'',startsAt:start.toISOString(),endsAt:end.toISOString()};render();document.querySelector('#appointment-patient-search')?.focus();},
       onManage:manageAppointment,
       onReschedule:saveCalendarReschedule,
       onError:error=>toast(error?.message||'Não foi possível carregar a agenda.',true),
-      onSearchChange:value=>{calendarSearchTerm=value;},
+      onSearchChange:(value,patientId)=>{calendarSearchTerm=value;calendarPatientId=patientId||'';},
       onExpandChange:value=>{calendarExpanded=value;},
       searchInput:document.querySelector('#agenda-patient-search'),
+      patientResults:document.querySelector('#agenda-patient-results'),
       searchStatus:document.querySelector('#agenda-search-status'),
       expandButton:document.querySelector('#calendar-expand'),
       expanded:calendarExpanded,
-      initialSearch:calendarSearchTerm
+      initialSearch:calendarSearchTerm,
+      initialPatientId:calendarPatientId
     });
   }
   window.dispatchEvent(new CustomEvent('alegrare:rendered'));
@@ -342,7 +344,7 @@ async function action(name,id){
   if(name==='open-patient'){modal={type:'patient',id};render();return;}
   if(name==='new-appointment'){
     if(!patients.length){toast('Cadastre um paciente antes de agendar.',true);location.hash='#/patients';return;}
-    modal={type:'appointment'};render();document.querySelector('#appointment-patient-search')?.focus();return;
+    modal={type:'appointment',patientId:calendarPatientId||''};render();document.querySelector('#appointment-patient-search')?.focus();return;
   }
   if(name==='new-rx'||name==='new-rx-for'){if(!patients.length){toast('Cadastre um paciente antes de prescrever.',true);location.hash='#/patients';return;}selectedMeds=[];modal={type:'prescription',patientId:name==='new-rx-for'?id:''};render();return;}
   if(name==='new-fiscal'){modal={type:'fiscal'};render();return;}

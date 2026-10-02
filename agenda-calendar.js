@@ -22,7 +22,13 @@ function matches(appointment, patients, query) {
   ].filter(Boolean).join(' ')).includes(query);
 }
 
-function eventFor(appointment, patients, query) {
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
+function eventFor(appointment, patients, query, patientId = '') {
   const person = patients.find((item) => item.id === appointment.patient_id);
   const colors = palette[appointment.status] || palette.scheduled;
   const canMove = !['cancelled', 'completed', 'no_show'].includes(appointment.status);
@@ -36,7 +42,7 @@ function eventFor(appointment, patients, query) {
     textColor: '#ffffff',
     editable: canMove,
     extendedProps: { appointment },
-    display: matches(appointment, patients, query) ? 'auto' : 'none',
+    display: (!patientId || appointment.patient_id === patientId) && matches(appointment, patients, query) ? 'auto' : 'none',
   };
 }
 
@@ -53,10 +59,12 @@ export function mountAgendaCalendar(options) {
     onSearchChange,
     onExpandChange,
     searchInput,
+    patientResults,
     searchStatus,
     expandButton,
     expanded = false,
     initialSearch = '',
+    initialPatientId = '',
   } = options;
 
   if (!element || !window.FullCalendar?.Calendar) {
@@ -65,6 +73,7 @@ export function mountAgendaCalendar(options) {
   }
 
   let searchValue = initialSearch;
+  let selectedPatientId = initialPatientId;
   let lastRecords = [];
   let disposed = false;
   let expandedNow = expanded;
@@ -74,26 +83,64 @@ export function mountAgendaCalendar(options) {
 
   function updateSearchStatus(records) {
     if (!searchStatus) return;
-    const visible = records.filter((record) => matches(record, patients, query())).length;
-    searchStatus.textContent = searchValue.trim()
+    const filterText = selectedPatientId ? '' : query();
+    const visible = records.filter((record) => {
+      return (!selectedPatientId || record.patient_id === selectedPatientId)
+        && matches(record, patients, filterText);
+    }).length;
+    const selectedPatient = patients.find((item) => item.id === selectedPatientId);
+    searchStatus.textContent = selectedPatient
+      ? `${selectedPatient.full_name}: ${visible} compromisso${visible === 1 ? '' : 's'} neste período.`
+      : searchValue.trim()
       ? `${visible} compromisso${visible === 1 ? '' : 's'} encontrado${visible === 1 ? '' : 's'} neste período.`
       : `${records.length} compromisso${records.length === 1 ? '' : 's'} neste período.`;
   }
 
   function applySearch() {
-    const activeQuery = query();
+    const activeQuery = selectedPatientId ? '' : query();
     let visible = 0;
     calendar.getEvents().forEach((event) => {
       const appointment = event.extendedProps.appointment;
-      const show = matches(appointment, patients, activeQuery);
+      const show = (!selectedPatientId || appointment.patient_id === selectedPatientId)
+        && matches(appointment, patients, activeQuery);
       event.setProp('display', show ? 'auto' : 'none');
       if (show) visible += 1;
     });
     if (searchStatus) {
-      searchStatus.textContent = searchValue.trim()
+      const selectedPatient = patients.find((item) => item.id === selectedPatientId);
+      searchStatus.textContent = selectedPatient
+        ? `${selectedPatient.full_name}: ${visible} compromisso${visible === 1 ? '' : 's'} neste período.`
+        : searchValue.trim()
         ? `${visible} compromisso${visible === 1 ? '' : 's'} encontrado${visible === 1 ? '' : 's'} neste período.`
         : `${lastRecords.length} compromisso${lastRecords.length === 1 ? '' : 's'} neste período.`;
     }
+  }
+
+  function renderPatientResults() {
+    if (!patientResults) return;
+    const activeQuery = query();
+    if (!activeQuery) {
+      patientResults.innerHTML = '';
+      patientResults.classList.remove('open');
+      return;
+    }
+    const found = patients.filter((person) => normalize(`${person.full_name || ''} ${person.phone || ''}`).includes(activeQuery)).slice(0, 8);
+    patientResults.innerHTML = found.length
+      ? found.map((person) => `<button type="button" role="option" data-agenda-patient="${escapeHtml(person.id)}"><b>${escapeHtml(person.full_name)}</b><small>${escapeHtml(person.phone || 'Telefone não informado')}</small></button>`).join('')
+      : `<div class="patient-search-empty">Nenhum paciente cadastrado corresponde a esta busca.</div>`;
+    patientResults.classList.add('open');
+  }
+
+  function selectPatient(patientId) {
+    const selected = patients.find((person) => person.id === patientId);
+    if (!selected) return;
+    selectedPatientId = selected.id;
+    searchValue = selected.full_name;
+    if (searchInput) searchInput.value = selected.full_name;
+    patientResults?.classList.remove('open');
+    if (patientResults) patientResults.innerHTML = '';
+    onSearchChange?.(searchValue, selectedPatientId);
+    applySearch();
   }
 
   async function saveMovedEvent(info) {
@@ -161,7 +208,7 @@ export function mountAgendaCalendar(options) {
           if (disposed) return;
           lastRecords = records || [];
           updateSearchStatus(lastRecords);
-          success(lastRecords.map((record) => eventFor(record, patients, query())));
+          success(lastRecords.map((record) => eventFor(record, patients, selectedPatientId ? '' : query(), selectedPatientId)));
         })
         .catch((error) => {
           if (disposed) return;
@@ -175,7 +222,7 @@ export function mountAgendaCalendar(options) {
     dateClick(info) {
       const start = new Date(info.date);
       if (info.allDay || info.view.type === 'dayGridMonth') start.setHours(9, 0, 0, 0);
-      onCreate?.(start, new Date(start.getTime() + 60 * 60 * 1000));
+      onCreate?.(start, new Date(start.getTime() + 60 * 60 * 1000), selectedPatientId);
     },
     select(info) {
       let start = new Date(info.start);
@@ -185,7 +232,7 @@ export function mountAgendaCalendar(options) {
         end = new Date(start.getTime() + 60 * 60 * 1000);
       }
       calendar.unselect();
-      onCreate?.(start, end);
+      onCreate?.(start, end, selectedPatientId);
     },
     eventClick(info) {
       info.jsEvent.preventDefault();
@@ -198,8 +245,49 @@ export function mountAgendaCalendar(options) {
 
   function handleSearch() {
     searchValue = searchInput.value;
-    onSearchChange?.(searchValue);
+    selectedPatientId = '';
+    onSearchChange?.(searchValue, selectedPatientId);
+    renderPatientResults();
     applySearch();
+  }
+
+  function handleSearchKeyDown(event) {
+    const options = Array.from(patientResults?.querySelectorAll('[data-agenda-patient]') || []);
+    if (event.key === 'ArrowDown' && options.length) {
+      event.preventDefault();
+      options[0].focus();
+    } else if (event.key === 'Enter' && options.length && patientResults?.classList.contains('open')) {
+      event.preventDefault();
+      options[0].click();
+    } else if (event.key === 'Escape') {
+      patientResults?.classList.remove('open');
+    }
+  }
+
+  function handlePatientResultKeyDown(event) {
+    const options = Array.from(patientResults.querySelectorAll('[data-agenda-patient]'));
+    const index = options.indexOf(document.activeElement);
+    if (event.key === 'ArrowDown' && options.length) {
+      event.preventDefault();
+      options[Math.min(index + 1, options.length - 1)].focus();
+    } else if (event.key === 'ArrowUp' && options.length) {
+      event.preventDefault();
+      if (index <= 0) searchInput?.focus();
+      else options[index - 1].focus();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      patientResults.classList.remove('open');
+      searchInput?.focus();
+    }
+  }
+
+  function handlePatientResultClick(event) {
+    const option = event.target.closest('[data-agenda-patient]');
+    if (option) selectPatient(option.dataset.agendaPatient);
+  }
+
+  function handlePatientResultMouseDown(event) {
+    if (event.target.closest('[data-agenda-patient]')) event.preventDefault();
   }
 
   function applyExpandedState() {
@@ -223,6 +311,10 @@ export function mountAgendaCalendar(options) {
   }
 
   searchInput?.addEventListener('input', handleSearch);
+  searchInput?.addEventListener('keydown', handleSearchKeyDown);
+  patientResults?.addEventListener('keydown', handlePatientResultKeyDown);
+  patientResults?.addEventListener('click', handlePatientResultClick);
+  patientResults?.addEventListener('mousedown', handlePatientResultMouseDown);
   expandButton?.addEventListener('click', toggleExpanded);
   document.addEventListener('keydown', handleKeyDown);
   calendar.render();
@@ -233,6 +325,10 @@ export function mountAgendaCalendar(options) {
     destroy() {
       disposed = true;
       searchInput?.removeEventListener('input', handleSearch);
+      searchInput?.removeEventListener('keydown', handleSearchKeyDown);
+      patientResults?.removeEventListener('keydown', handlePatientResultKeyDown);
+      patientResults?.removeEventListener('click', handlePatientResultClick);
+      patientResults?.removeEventListener('mousedown', handlePatientResultMouseDown);
       expandButton?.removeEventListener('click', toggleExpanded);
       document.removeEventListener('keydown', handleKeyDown);
       if (expandedNow) document.body.classList.remove('calendar-overlay-open');

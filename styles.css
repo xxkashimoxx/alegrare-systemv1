@@ -24,9 +24,11 @@ html,body,#app{width:100%;max-width:100%;overflow-x:hidden}.shell,.shell>main,.s
 /* Agenda interativa */
 .calendar-card{margin-bottom:18px;overflow:visible}
 .calendar-tools{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
-.calendar-search{display:grid;gap:7px;min-width:min(340px,100%);font-size:12px;font-weight:700;color:#4A5560}
+.calendar-search-wrap{position:relative;z-index:3;display:grid;width:min(340px,100%)}
+.calendar-search{display:grid;gap:7px;min-width:0;font-size:12px;font-weight:700;color:#4A5560}
 .calendar-search input{width:100%;border:1px solid #D8DEE4;border-radius:9px;padding:11px 12px;background:#fff;color:var(--ink);outline:none}
 .calendar-search input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(38,128,179,.1)}
+.calendar-search-wrap .patient-search-results{position:absolute;top:100%;left:0;right:0;z-index:30;margin-top:4px}
 .calendar-tools-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap}
 #agenda-search-status{font-size:11px;color:var(--muted)}
 .calendar-scroll{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
@@ -77,7 +79,7 @@ body.calendar-overlay-open::before{content:"";position:fixed;inset:0;background:
 [hidden]{display:none!important}
 @media(max-width:700px){
   .calendar-tools,.calendar-tools-actions{width:100%;align-items:stretch}
-  .calendar-search{width:100%;min-width:0}
+  .calendar-search-wrap,.calendar-search{width:100%;min-width:0}
   .calendar-tools-actions{justify-content:space-between}
   #agenda-calendar{min-width:720px}
   .calendar-card.is-expanded{inset:0;border-radius:0;padding:16px 12px}
