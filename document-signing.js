@@ -1,4 +1,6 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase-client.js';
+import { bindPatientPicker, searchPattern, safeIdList } from './clinic-search.js';
+import { loadPatientDirectory } from './clinic-directory.js';
 
 const SIGN_FUNCTION = `${SUPABASE_URL}/functions/v1/patient-document-sign`;
 
@@ -11,7 +13,7 @@ let cachedProfile = null;
 let injecting = false;
 const DOCUMENT_PAGE_SIZE = 12;
 let documentPage = 1;
-let documentTotal = 0;
+let documentTotal = 0, documentTerm='', documentStatus='', documentSequence=0, documentSearchTimer=null, patientRenderToken=null;
 
 function toast(message, error = false){
   let el = $('#real-toast');
@@ -47,7 +49,7 @@ async function openUpload(){
     const currentSession=await session();
     if(!currentSession){toast('Entre no painel para enviar documentos.',true);return;}
     const currentProfile=await profile();
-    const result=await supabase.from('patients').select('id,full_name').eq('clinic_id',currentProfile.clinic_id).order('full_name');
+    const result=await loadPatientDirectory(currentProfile.clinic_id);
     if(result.error){toast('Não foi possível carregar os pacientes.',true);return;}
     const patients=result.data||[];
     if(!patients.length){toast('Cadastre um paciente antes de enviar um documento.',true);return;}
@@ -71,6 +73,7 @@ async function openUpload(){
     const selectedPatientName=()=>form.elements.patient.selectedOptions[0]?.dataset.name||'';
     form.elements.signers.forEach(r=>r.addEventListener('change',()=>{patientContact.hidden=r.value==='professional'; if(!patientContact.hidden && !form.elements.patientSignerName.value) form.elements.patientSignerName.value=selectedPatientName();}));
     form.elements.patient.addEventListener('change',()=>{if(!patientContact.hidden) form.elements.patientSignerName.value=selectedPatientName();});
+    bindPatientPicker(form.elements.patient,patients);
     form.addEventListener('submit',uploadDocument);
 }
 
@@ -130,44 +133,57 @@ function documentsPagination(){
 
 async function refreshDocuments(page=documentPage){
   const host=$('#real-documents-list'); if(!host) return;
+  const seq=++documentSequence;host.setAttribute('aria-busy','true');const feedback=$('#real-document-feedback');if(feedback)feedback.textContent='Buscando documentos em todo o histórico…';
   const s=await session();
   if(!s){host.innerHTML='<div class="real-empty"><p>Entre no painel para ver os documentos.</p></div>';return;}
   const p=await profile();
   const from=(page-1)*DOCUMENT_PAGE_SIZE,to=from+DOCUMENT_PAGE_SIZE-1;
-  const {data,error,count}=await supabase.from('documents').select('id,title,patient_name,file_name,status,created_at,document_signers(id,signer_type,signer_name,status,signing_token,signed_at)',{count:'exact'}).eq('clinic_id',p.clinic_id).order('created_at',{ascending:false}).range(from,to);
-  if(error){host.innerHTML='<div class="real-empty"><p>Não foi possível carregar os documentos.</p></div>';return;}
-  documentTotal=count||0;
+  let query=supabase.from('documents').select('id,title,patient_name,file_name,file_path,mime_type,status,created_at,document_signers(id,signer_type,signer_name,status,signing_token,signed_at)',{count:'exact'}).eq('clinic_id',p.clinic_id);
+  if(documentTerm.trim()){const pattern=searchPattern(documentTerm);const {data:patientMatches,error:patientError}=await supabase.from('patients').select('id').eq('clinic_id',p.clinic_id).or(`full_name.ilike.${pattern},phone.ilike.${pattern}`).limit(500);if(patientError||patientMatches?.length===500){host.removeAttribute('aria-busy');if(feedback)feedback.textContent=patientError?'Não foi possível buscar os pacientes dos documentos.':'Há muitos pacientes correspondentes. Refine o nome ou telefone.';return;}const ids=safeIdList((patientMatches||[]).map(p=>p.id));query=query.or(`title.ilike.${pattern},patient_name.ilike.${pattern},file_name.ilike.${pattern}`+(ids.length?`,patient_id.in.(${ids.join(',')})`:''));}
+  if(documentStatus)query=query.eq('status',documentStatus);
+  const {data,error,count}=await query.order('created_at',{ascending:false}).order('id').range(from,to);
+  if(seq!==documentSequence||!host.isConnected)return;host.removeAttribute('aria-busy');
+  if(error){if(feedback)feedback.textContent='Não foi possível consultar os documentos.';host.innerHTML='<div class="real-empty"><p>Falha na consulta. Tente novamente.</p><button class="real-btn ghost" data-doc-retry>Tentar novamente</button></div>';host.querySelector('[data-doc-retry]').onclick=()=>refreshDocuments(page);return;}
+  documentTotal=count||0;if(feedback)feedback.textContent=`${documentTotal} documento(s) encontrado(s) em todo o histórico.`;
   const pages=Math.max(1,Math.ceil(documentTotal/DOCUMENT_PAGE_SIZE));
   documentPage=Math.min(Math.max(1,page),pages);
-  if(!data?.length){host.innerHTML='<div class="real-empty"><b>Nenhum documento enviado</b><p>Use “Enviar documento” para começar.</p></div>';return;}
+  if(page>pages){return refreshDocuments(documentPage);}
+  if(!data?.length){host.innerHTML='<div class="real-empty"><b>Nenhum documento encontrado</b><p>Ajuste a busca ou envie um documento.</p></div>';return;}
   host.innerHTML=`${data.map(doc=>{
     const patient=doc.document_signers?.find(x=>x.signer_type==='patient');
     const professional=doc.document_signers?.find(x=>x.signer_type==='professional');
     const labels=[]; if(professional) labels.push(`Profissional: ${professional.status==='signed'?'assinado':'pendente'}`); if(patient) labels.push(`Paciente: ${patient.status==='signed'?'assinado':'pendente'}`);
-    return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">PDF</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions">${professional?.status==='pending'?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
+    return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">${esc((doc.file_name||'Arquivo').split('.').pop().toUpperCase().slice(0,5))}</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions"><button class="real-btn ghost small" data-doc-open="${doc.id}">Abrir arquivo</button>${professional?.status==='pending'?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
   }).join('')}${documentsPagination()}`;
+  host.querySelectorAll('[data-doc-open]').forEach(b=>b.onclick=()=>openDocument(data.find(doc=>doc.id===b.dataset.docOpen)));
   host.querySelectorAll('[data-prof-sign]').forEach(b=>b.addEventListener('click',()=>signProfessional(b.dataset.profSign)));
   host.querySelectorAll('[data-copy-token]').forEach(b=>b.addEventListener('click',async()=>{await navigator.clipboard.writeText(patientLink(b.dataset.copyToken));toast('Link do paciente copiado.');}));
   host.querySelectorAll('[data-doc-page]').forEach(b=>b.addEventListener('click',()=>refreshDocuments(Number(b.dataset.docPage))));
 }
 
+async function openDocument(doc){
+ const m=modal(`<div class="real-modal-head"><h2>${esc(doc.title)}</h2><button data-real-close aria-label="Fechar">×</button></div><div id="real-file-preview"><p>Preparando acesso ao arquivo…</p></div>`);
+ try{if(!doc.file_path)throw new Error('O arquivo não possui caminho de armazenamento.');const {data,error}=await supabase.storage.from('clinic-documents').createSignedUrl(doc.file_path,300);if(error)throw error;if(!m.isConnected)return;const url=data.signedUrl,host=$('#real-file-preview',m);host.innerHTML=`<p>Paciente: ${esc(doc.patient_name)} · ${esc(doc.file_name)}</p><a class="real-btn primary" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Abrir / baixar arquivo</a><p class="real-help">O acesso ao arquivo expira em cinco minutos.</p>${(doc.mime_type||'').startsWith('image/')?`<img class="document-preview-image" src="${esc(url)}" alt="Documento">`:(doc.mime_type==='application/pdf'||/\.pdf$/i.test(doc.file_name))?`<iframe class="document-preview-frame" src="${esc(url)}" title="Visualização do documento"></iframe>`:''}`;
+ }catch(error){if(m.isConnected)$('#real-file-preview',m).textContent=error.message||'Não foi possível abrir o arquivo.';}
+}
+
 async function signProfessional(id){
   const s=await session(); if(!s){toast('Sua sessão expirou. Entre novamente.',true);return;}
-  const {error}=await supabase.from('document_signers').update({status:'signed',signed_at:new Date().toISOString(),signature_method:'authenticated_clinic_user'}).eq('id',id).eq('status','pending');
-  if(error){toast(error.message,true);return;} toast('Assinatura profissional registrada.'); refreshDocuments();
+  const p=await profile();const {data,error}=await supabase.from('document_signers').update({status:'signed',signed_at:new Date().toISOString(),signature_method:'authenticated_clinic_user'}).eq('clinic_id',p.clinic_id).eq('id',id).eq('status','pending').select('id').maybeSingle();
+  if(error||!data){toast(error?.message||'A assinatura mudou ou seu perfil não permite assinar. Atualize os documentos.',true);return;} toast('Assinatura profissional registrada.'); refreshDocuments();
 }
 
 async function injectClinicUI(){
   if(injecting || isPatientRoute()) return;
   const content=$('.content'); if(!content) return;
-  const isDocs=location.hash.includes('prescriptions') || /Prescriç|Documentos/i.test(content.textContent||'');
+  const isDocs=location.hash==='#/documents';
   if(!isDocs) return;
   injecting=true;
   try{
     if(!$('#real-documents-card')){
       const card=document.createElement('section'); card.id='real-documents-card'; card.className='card real-documents-card';
-      card.innerHTML='<div class="real-section-head"><div><small>ASSINATURAS</small><h2>Documentos enviados</h2><p>Um lugar para acompanhar profissional e paciente.</p></div></div><div id="real-documents-list"><div class="real-loading">Carregando...</div></div>';
-      content.appendChild(card); refreshDocuments();
+      card.innerHTML='<div class="real-section-head"><div><small>ASSINATURAS</small><h2>Documentos enviados</h2><p>Um lugar para acompanhar profissional e paciente.</p></div></div><div class="record-search-tools"><label>Buscar documento<input id="real-document-search" type="search" autocomplete="off" placeholder="Paciente, telefone, título ou arquivo"></label><label>Situação<select id="real-document-status"><option value="">Todas</option><option value="signed">Assinados</option><option value="pending">Pendentes</option></select></label></div><p id="real-document-feedback" class="search-feedback" role="status"></p><div id="real-documents-list"><div class="real-loading">Carregando...</div></div>';
+      content.appendChild(card);$('#real-document-search').value=documentTerm;$('#real-document-status').value=documentStatus;$('#real-document-search').oninput=e=>{documentTerm=e.target.value;documentPage=1;documentSequence++;clearTimeout(documentSearchTimer);documentSearchTimer=setTimeout(()=>refreshDocuments(1),250);};$('#real-document-status').onchange=e=>{documentStatus=e.target.value;documentPage=1;refreshDocuments(1);};refreshDocuments();
     }
   }finally{injecting=false;}
 }
@@ -177,6 +193,7 @@ function tokenFromRoute(){ return location.hash.split('/')[2] || ''; }
 
 async function renderPatientSigning(){
   if(!isPatientRoute()) return false;
+  const token=tokenFromRoute();if(patientRenderToken===token)return true;patientRenderToken=token;
   const app=$('#app'); if(!app) return true;
   app.innerHTML=`<main class="patient-sign-page"><section class="patient-sign-shell"><div class="sign-brand"><span>A</span><div><b>Alegrare</b><small>ODONTOLOGIA ESPECIAL</small></div></div><div id="patient-sign-content" class="patient-sign-card"><p>Carregando documento...</p></div></section></main>`;
   const host=$('#patient-sign-content');
@@ -198,7 +215,7 @@ async function renderPatientSigning(){
   return true;
 }
 
-const observer=new MutationObserver(()=>{ if(isPatientRoute()) renderPatientSigning(); else injectClinicUI(); });
+const observer=new MutationObserver(()=>{ if(isPatientRoute()) renderPatientSigning(); else {patientRenderToken=null;injectClinicUI();} });
 observer.observe(document.documentElement,{childList:true,subtree:true});
 window.addEventListener('hashchange',()=>setTimeout(()=>{ if(isPatientRoute()) renderPatientSigning(); else injectClinicUI(); },0));
 window.addEventListener('alegrare:rendered',injectClinicUI);
