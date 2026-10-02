@@ -7,6 +7,7 @@ import { bindPatientPicker, searchPattern } from './clinic-search.js';
 import { escapeText, printReport } from './clinic-export.js';
 import { PrescriptionBrowser } from './prescription-browser.js';
 import { FinancePanel } from './finance-panel.js';
+import { loadPatientDirectory } from './clinic-directory.js';
 
 const app = document.querySelector('#app');
 const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
@@ -60,7 +61,7 @@ async function loadWorkspace(){
   const now=new Date().toISOString();
   const results=await Promise.all([
     supabase.from('clinics').select('id,name').eq('id',profile.clinic_id).single(),
-    supabase.from('patients').select('*').eq('clinic_id',profile.clinic_id).order('full_name'),
+    loadPatientDirectory(profile.clinic_id),
     supabase.from('appointments').select('*').eq('clinic_id',profile.clinic_id).gte('ends_at',now).order('starts_at',{ascending:true}).limit(200),
     supabase.from('appointments').select('*',{count:'exact'}).eq('clinic_id',profile.clinic_id).lt('ends_at',now).order('starts_at',{ascending:false}).range(0,PAGE_SIZE-1),
     supabase.from('prescriptions').select('*,prescription_items(id,medication_id,medication_name,instructions,position)',{count:'exact'}).eq('clinic_id',profile.clinic_id).order('created_at',{ascending:false}).range(0,PAGE_SIZE-1),

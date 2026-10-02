@@ -1,5 +1,6 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase-client.js';
 import { bindPatientPicker, searchPattern, safeIdList } from './clinic-search.js';
+import { loadPatientDirectory } from './clinic-directory.js';
 
 const SIGN_FUNCTION = `${SUPABASE_URL}/functions/v1/patient-document-sign`;
 
@@ -48,7 +49,7 @@ async function openUpload(){
     const currentSession=await session();
     if(!currentSession){toast('Entre no painel para enviar documentos.',true);return;}
     const currentProfile=await profile();
-    const result=await supabase.from('patients').select('id,full_name,phone').eq('clinic_id',currentProfile.clinic_id).order('full_name');
+    const result=await loadPatientDirectory(currentProfile.clinic_id);
     if(result.error){toast('Não foi possível carregar os pacientes.',true);return;}
     const patients=result.data||[];
     if(!patients.length){toast('Cadastre um paciente antes de enviar um documento.',true);return;}
@@ -138,7 +139,7 @@ async function refreshDocuments(page=documentPage){
   const p=await profile();
   const from=(page-1)*DOCUMENT_PAGE_SIZE,to=from+DOCUMENT_PAGE_SIZE-1;
   let query=supabase.from('documents').select('id,title,patient_name,file_name,file_path,mime_type,status,created_at,document_signers(id,signer_type,signer_name,status,signing_token,signed_at)',{count:'exact'}).eq('clinic_id',p.clinic_id);
-  if(documentTerm.trim()){const pattern=searchPattern(documentTerm);const {data:patientMatches,error:patientError}=await supabase.from('patients').select('id').eq('clinic_id',p.clinic_id).or(`full_name.ilike.${pattern},phone.ilike.${pattern}`).limit(500);if(patientError){host.removeAttribute('aria-busy');if(feedback)feedback.textContent='Não foi possível buscar os pacientes dos documentos.';return;}const ids=safeIdList((patientMatches||[]).map(p=>p.id));query=query.or(`title.ilike.${pattern},patient_name.ilike.${pattern},file_name.ilike.${pattern}`+(ids.length?`,patient_id.in.(${ids.join(',')})`:''));}
+  if(documentTerm.trim()){const pattern=searchPattern(documentTerm);const {data:patientMatches,error:patientError}=await supabase.from('patients').select('id').eq('clinic_id',p.clinic_id).or(`full_name.ilike.${pattern},phone.ilike.${pattern}`).limit(500);if(patientError||patientMatches?.length===500){host.removeAttribute('aria-busy');if(feedback)feedback.textContent=patientError?'Não foi possível buscar os pacientes dos documentos.':'Há muitos pacientes correspondentes. Refine o nome ou telefone.';return;}const ids=safeIdList((patientMatches||[]).map(p=>p.id));query=query.or(`title.ilike.${pattern},patient_name.ilike.${pattern},file_name.ilike.${pattern}`+(ids.length?`,patient_id.in.(${ids.join(',')})`:''));}
   if(documentStatus)query=query.eq('status',documentStatus);
   const {data,error,count}=await query.order('created_at',{ascending:false}).order('id').range(from,to);
   if(seq!==documentSequence||!host.isConnected)return;host.removeAttribute('aria-busy');
