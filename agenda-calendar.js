@@ -181,7 +181,7 @@ export function mountAgendaCalendar(options) {
   const calendar = new window.FullCalendar.Calendar(element, {
     locale: 'pt-br',
     firstDay: 1,
-    initialView: 'timeGridWeek',
+    initialView: window.matchMedia('(max-width: 700px)').matches ? 'timeGridDay' : 'timeGridWeek',
     height: 'auto',
     expandRows: true,
     nowIndicator: true,
@@ -191,7 +191,7 @@ export function mountAgendaCalendar(options) {
     editable: true,
     eventDurationEditable: true,
     eventStartEditable: true,
-    slotDuration: '00:15:00',
+    slotDuration: '00:30:00',
     snapDuration: '00:15:00',
     slotMinTime: '06:00:00',
     slotMaxTime: '22:00:00',
@@ -199,11 +199,21 @@ export function mountAgendaCalendar(options) {
     allDaySlot: true,
     dayMaxEvents: true,
     headerToolbar: {
-      left: 'prev,next today',
+      start: 'prev,next today',
       center: 'title',
-      right: 'timeGridWeek,dayGridMonth,listWeek',
+      end: 'timeGridDay,timeGridWeek,dayGridMonth,listWeek',
     },
-    buttonText: { today: 'Hoje', timeGridWeek: 'Semana', dayGridMonth: 'Mês', listWeek: 'Lista' },
+    headerToolbarClass: 'agenda-toolbar',
+    toolbarTitleClass: 'agenda-toolbar-title',
+    toolbarSectionClass: 'agenda-toolbar-section',
+    buttonClass: (data) => `agenda-button${data.isSelected ? ' is-active' : ''}`,
+    buttons: {
+      today: { text: 'Hoje' },
+      timeGridDay: { text: 'Dia' },
+      timeGridWeek: { text: 'Semana' },
+      dayGridMonth: { text: 'Mês' },
+      listWeek: { text: 'Lista' },
+    },
     noEventsContent: 'Nenhum compromisso neste período.',
     events(fetchInfo, success, failure) {
       Promise.resolve(loadAppointments(fetchInfo.start, fetchInfo.end))
