@@ -1,5 +1,6 @@
 import { supabase } from './supabase-client.js';
 import { openAppointmentCare } from './appointment-care.js';
+import { mountAgendaCalendar } from './agenda-calendar.js';
 
 const app = document.querySelector('#app');
 const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
@@ -8,6 +9,7 @@ let route = location.hash.replace('#/','').split('/')[0] || 'home';
 let session, profile, clinic, modal;
 let patients = [], appointments = [], prescriptions = [], medications = [];
 let documentsCount = 0, fiscalDocuments = [], selectedMeds = [], busy = false;
+let agendaCalendar = null, calendarSearchTerm = '', calendarPatientId = '', calendarExpanded = false;
 const PAGE_SIZE = 12;
 let pageState = {agenda:1,prescriptions:1,fiscal:1};
 let pageTotals = {agenda:0,prescriptions:0,fiscal:0};
@@ -91,8 +93,134 @@ function appointmentRow(a){const p=patient(a.patient_id);return `<article class=
 
 function homePage(){const next=upcoming().slice(0,4),pending=prescriptions.filter(p=>p.status!=='signed').length;return `${pageHead(`Olá, ${profile?.full_name?.split(' ')[0]||'Danielle'}.`,'Aqui está o que merece sua atenção hoje.','<button class="primary" data-action="new-appointment">Novo compromisso</button>')}<section class="metrics"><button data-route="agenda"><small>Compromissos de hoje</small><strong>${today().length}</strong><span>Abra a agenda para organizar o dia</span></button><button data-route="patients"><small>Pacientes cadastrados</small><strong>${patients.length}</strong><span>Dados reais da clínica</span></button><button data-route="prescriptions"><small>Assinaturas pendentes</small><strong>${pending}</strong><span>Prescrições aguardando conclusão</span></button></section><section class="card"><div class="card-title"><div><h2>Próximos compromissos</h2><p>Agenda objetiva, sem ruído.</p></div><button class="link" data-route="agenda">Ver agenda</button></div>${next.length?`<div class="appointment-list">${next.map(appointmentRow).join('')}</div>`:empty('Agenda pronta para começar','Cadastre o primeiro compromisso da Danielle.','<button class="primary" data-action="new-appointment">Agendar agora</button>')}</section>`;}
 
-function agendaPage(){const now=new Date(),next=appointments.filter(a=>new Date(a.ends_at)>=now&&a.status!=='cancelled').sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)),history=appointments.filter(a=>new Date(a.ends_at)<now).sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at));return `${pageHead('Agenda','Organize os compromissos da clínica em ordem cronológica.','<button class="primary" data-action="new-appointment">Novo compromisso</button>')}<section class="card"><div class="card-title"><div><h2>Próximos compromissos</h2><p>O que vem agora aparece primeiro.</p></div></div>${next.length?`<div class="appointment-list">${next.map(appointmentRow).join('')}</div>`:empty('Nenhum compromisso próximo','Assim que você agendar, ele aparecerá aqui.','<button class="primary" data-action="new-appointment">Criar compromisso</button>')}</section>${history.length?`<section class="card history-card"><div class="card-title"><div><h2>Histórico de compromissos</h2><p>Do mais recente para o mais antigo.</p></div></div><div class="appointment-list">${history.map(appointmentRow).join('')}</div>${pagination('agenda')}</section>`:''}`;}
+function agendaPage(){
+  const now=new Date(),history=appointments.filter(a=>new Date(a.ends_at)<now).sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at));
+  const header=pageHead('Agenda','Veja a semana inteira, navegue pelos meses e marque um horário direto no calendário.','<button class="primary" data-action="new-appointment">Novo compromisso</button>');
+  const calendar='<section class="card calendar-card" id="calendar-card">'+
+    '<div class="calendar-tools">'+
+      '<div class="calendar-search-wrap"><label class="calendar-search" for="agenda-patient-search"><span>Buscar paciente cadastrado</span><input id="agenda-patient-search" type="search" autocomplete="off" aria-autocomplete="list" aria-controls="agenda-patient-results" value="'+esc(calendarSearchTerm)+'" placeholder="Nome ou telefone do paciente"></label><div id="agenda-patient-results" class="patient-search-results" role="listbox" aria-label="Pacientes encontrados"></div></div>'+
+      '<div class="calendar-tools-actions"><span id="agenda-search-status" role="status">Carregando compromissos…</span><button type="button" class="secondary" id="calendar-expand" aria-pressed="'+String(calendarExpanded)+'">'+(calendarExpanded?'Reduzir agenda':'Expandir agenda')+'</button></div>'+
+    '</div>'+
+    '<div class="calendar-scroll"><div id="agenda-calendar" aria-label="Agenda interativa da clínica"></div></div>'+
+    '<div class="calendar-legend" aria-label="Legenda de situações"><span><i class="scheduled"></i>Agendada</span><span><i class="confirmed"></i>Confirmada</span><span><i class="completed"></i>Concluída</span><span><i class="no-show"></i>Faltou</span><span><i class="cancelled"></i>Cancelada</span><small>Pesquise e selecione um paciente; depois clique ou arraste no horário desejado para agendar. Arraste um compromisso para remarcar.</small></div>'+
+  '</section>';
+  const old=history.length?'<section class="card history-card"><div class="card-title"><div><h2>Histórico de compromissos</h2><p>Do mais recente para o mais antigo.</p></div></div><div class="appointment-list">'+history.map(appointmentRow).join('')+'</div>'+pagination('agenda')+'</section>':'';
+  return header+calendar+old;
+}
 
+function appointmentInputRange(startValue,endValue){
+  let start=startValue?new Date(startValue):new Date();
+  if(!startValue)start.setHours(start.getHours()+1,0,0,0);
+  let end=endValue?new Date(endValue):new Date(start.getTime()+60*60*1000);
+  if(!Number.isFinite(+start))start=new Date(Date.now()+60*60*1000);
+  if(!Number.isFinite(+end)||end<=start)end=new Date(start.getTime()+60*60*1000);
+  const local=value=>new Date(value.getTime()-value.getTimezoneOffset()*60000).toISOString().slice(0,16);
+  return {start:local(start),end:local(end)};
+}
+
+function normalizePatientSearch(value){return String(value||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLocaleLowerCase('pt-BR').trim();}
+
+function bindAppointmentPatientSearch(){
+  const input=document.querySelector('#appointment-patient-search');
+  const results=document.querySelector('#appointment-patient-results');
+  const hidden=document.querySelector('#appointment-form input[name="patient_id"]');
+  const status=document.querySelector('#appointment-patient-status');
+  const picked=document.querySelector('#appointment-patient-selected');
+  if(!input||!results||!hidden)return;
+  const showResults=()=>{
+    const query=normalizePatientSearch(input.value);
+    const found=patients.filter(p=>normalizePatientSearch((p.full_name||'')+' '+(p.phone||'')).includes(query)).slice(0,8);
+    results.innerHTML=found.length?found.map(p=>'<button type="button" role="option" data-patient-option="'+esc(p.id)+'"><b>'+esc(p.full_name)+'</b><small>'+esc(p.phone||'Telefone não informado')+'</small></button>').join(''):'<div class="patient-search-empty">'+(query?'Nenhum paciente localizado. Confira o nome ou telefone.':'Nenhum paciente cadastrado.')+'</div>';
+    results.classList.add('open');
+  };
+  input.addEventListener('focus',showResults);
+  input.addEventListener('keydown',event=>{
+    const options=Array.from(results.querySelectorAll('[data-patient-option]'));
+    if(event.key==='ArrowDown'&&options.length){event.preventDefault();options[0].focus();}
+    if(event.key==='Enter'&&results.classList.contains('open')&&options.length&&!hidden.value){event.preventDefault();options[0].click();}
+    if(event.key==='Escape')results.classList.remove('open');
+  });
+  input.addEventListener('input',()=>{
+    hidden.value='';
+    if(picked)picked.hidden=true;
+    if(status)status.textContent='Escolha um paciente da lista de resultados.';
+    showResults();
+  });
+  results.addEventListener('keydown',event=>{
+    const options=Array.from(results.querySelectorAll('[data-patient-option]'));
+    const index=options.indexOf(document.activeElement);
+    if(event.key==='ArrowDown'&&options.length){event.preventDefault();options[Math.min(index+1,options.length-1)].focus();}
+    if(event.key==='ArrowUp'&&options.length){event.preventDefault();if(index<=0)input.focus();else options[index-1].focus();}
+    if(event.key==='Escape'){event.preventDefault();results.classList.remove('open');input.focus();}
+  });
+  results.addEventListener('mousedown',event=>{if(event.target.closest('[data-patient-option]'))event.preventDefault();});
+  results.addEventListener('click',event=>{
+    const option=event.target.closest('[data-patient-option]');
+    if(!option)return;
+    const selected=patients.find(p=>p.id===option.dataset.patientOption);
+    if(!selected)return;
+    input.value=selected.full_name;
+    hidden.value=selected.id;
+    results.classList.remove('open');results.innerHTML='';
+    if(picked){picked.hidden=false;picked.innerHTML='<span>Paciente selecionado: <b>'+esc(selected.full_name)+'</b></span><button type="button">Trocar</button>';picked.querySelector('button').onclick=()=>{hidden.value='';input.value='';picked.hidden=true;status.textContent='Escolha um paciente da lista de resultados.';input.focus();};}
+    if(status)status.textContent='Paciente selecionado.';
+  });
+}
+
+async function fetchCalendarAppointments(start,end){
+  const {data,error}=await supabase.from('appointments').select('*').eq('clinic_id',profile.clinic_id)
+    .lt('starts_at',end.toISOString()).gt('ends_at',start.toISOString())
+    .order('starts_at',{ascending:true}).limit(1000);
+  if(error)throw error;
+  return data||[];
+}
+
+function manageAppointment(appointment){
+  if(!appointment||!profile)return;
+  openAppointmentCare(appointment,patient(appointment.patient_id),profile.clinic_id,async()=>{
+    modal=null;pageState={agenda:1,prescriptions:1,fiscal:1};
+    try{await loadWorkspace();render();toast('Consulta atualizada.');}
+    catch{toast('Consulta salva. Atualize a página para recarregar a agenda.',true);}
+  });
+}
+
+function askRescheduleReason(appointment,start){
+  const dialog=document.createElement('dialog');dialog.className='calendar-dialog';
+  const person=patient(appointment.patient_id)?.full_name||'Paciente';
+  const fmt=value=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
+  dialog.innerHTML='<form class="data-form reschedule-form"><div class="modal-head"><div><h2>Confirmar remarcação</h2><p>'+esc(person)+' · '+fmt(appointment.starts_at)+' → '+fmt(start)+'</p></div><button type="button" data-reschedule-cancel aria-label="Cancelar">×</button></div><label>Motivo da remarcação<input name="reason" required placeholder="Ex.: solicitação do paciente"></label><div class="modal-actions"><button class="secondary" type="button" data-reschedule-cancel>Voltar ao horário anterior</button><button class="primary" type="submit">Salvar novo horário</button></div></form>';
+  document.body.append(dialog);dialog.showModal();
+  const form=dialog.querySelector('form');
+  return new Promise(resolve=>{
+    let finished=false;
+    const finish=value=>{if(finished)return;finished=true;dialog.close();dialog.remove();resolve(value);};
+    dialog.querySelectorAll('[data-reschedule-cancel]').forEach(button=>button.onclick=()=>finish(null));
+    dialog.addEventListener('cancel',event=>{event.preventDefault();finish(null);});
+    form.addEventListener('submit',event=>{event.preventDefault();finish(String(new FormData(form).get('reason')||'').trim()||null);});
+    form.elements.reason.focus();
+  });
+}
+
+async function saveCalendarReschedule(appointment,startValue,endValue){
+  const start=new Date(startValue),end=new Date(endValue);
+  if(!Number.isFinite(+start)||!Number.isFinite(+end)||end<=start){toast('Confira o novo horário do compromisso.',true);return null;}
+  const reason=await askRescheduleReason(appointment,start);
+  if(!reason)return null;
+  const oldStart=appointment.starts_at,notes=String(appointment.notes||'');
+  const entry='['+new Date().toISOString()+'] Remarcação de '+oldStart+' para '+start.toISOString()+': '+reason;
+  const payload={starts_at:start.toISOString(),ends_at:end.toISOString(),status:appointment.status==='confirmed'?'scheduled':(appointment.status||'scheduled'),notes:(notes?notes+'\n\n':'')+entry};
+  let query=supabase.from('appointments').update(payload).eq('id',appointment.id).eq('clinic_id',profile.clinic_id);
+  if(appointment.updated_at)query=query.eq('updated_at',appointment.updated_at);
+  else query=query.eq('starts_at',appointment.starts_at).eq('ends_at',appointment.ends_at).eq('status',appointment.status);
+  const {data,error}=await query.select('*').maybeSingle();
+  if(error){toast(error.message,true);return null;}
+  if(!data){toast('O compromisso mudou em outra tela. Atualize a agenda e tente novamente.',true);return null;}
+  const index=appointments.findIndex(item=>item.id===data.id);
+  if(index>=0)appointments[index]=data;else appointments.push(data);
+  appointments.sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
+  toast('Compromisso remarcado.');
+  return data;
+}
 function patientRow(p){const detail=[p.current_treatment,p.phone].filter(Boolean).join(' · ')||'Cadastro inicial';return `<button class="patient-row" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(p.full_name)}</span><div><b>${esc(p.full_name)}</b><small>${esc(detail)}</small></div><span class="status">${esc(label(p.status))}</span><i>›</i></button>`;}
 function patientsPage(){return `${pageHead('Pacientes','Cadastros ligados à agenda e às prescrições.','<button class="primary" data-action="new-patient">Novo paciente</button>')}<section class="card patient-list">${patients.length?patients.map(patientRow).join(''):empty('Nenhum paciente cadastrado','Comece pelo cadastro do primeiro paciente.','<button class="primary" data-action="new-patient">Cadastrar paciente</button>')}</section>`;}
 
@@ -107,7 +235,22 @@ function patientModal(id){const p=patient(id),items=appointments.filter(a=>a.pat
 
 function newPatientModal(){return `<div class="modal-card"><div class="modal-head"><div><h2>Novo paciente</h2><p>Cadastre somente o necessário. Complete os demais dados depois.</p></div><button data-action="close">×</button></div><form id="patient-form" class="data-form"><label>Nome completo<input name="full_name" required></label><div class="form-grid"><label>Telefone<input name="phone" inputmode="tel"></label><label>E-mail<input name="email" type="email"></label></div><label>Tratamento atual<input name="current_treatment" placeholder="Ex.: Clareamento"></label><label>Observações<textarea name="notes" rows="3"></textarea></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar paciente</button></div></form></div>`;}
 
-function appointmentModal(){const start=new Date(Date.now()+3600000);start.setMinutes(0,0,0);const end=new Date(start.getTime()+3600000),local=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);return `<div class="modal-card"><div class="modal-head"><div><h2>Novo compromisso</h2><p>Defina paciente, horário e motivo.</p></div><button data-action="close">×</button></div><form id="appointment-form" class="data-form"><label>Paciente<select name="patient_id" required><option value="">Selecione</option>${patients.map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}</select></label><label>Procedimento ou motivo<input name="procedure_name" required placeholder="Ex.: Avaliação"></label><div class="form-grid"><label>Início<input name="starts_at" type="datetime-local" required value="${local(start)}"></label><label>Término<input name="ends_at" type="datetime-local" required value="${local(end)}"></label></div><label>Observações<textarea name="notes" rows="3"></textarea></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar compromisso</button></div></form></div>`;}
+function appointmentModal(){
+  const range=appointmentInputRange(modal?.startsAt,modal?.endsAt);
+  const selected=patients.find(p=>p.id===(modal?.patientId||''));
+  return '<div class="modal-card"><div class="modal-head"><div><h2>Novo compromisso</h2><p>Busque o paciente cadastrado e confirme o horário escolhido.</p></div><button data-action="close" aria-label="Fechar">×</button></div>'+
+    '<form id="appointment-form" class="data-form">'+
+      '<label class="patient-picker-label" for="appointment-patient-search">Buscar paciente cadastrado<input id="appointment-patient-search" type="search" autocomplete="off" aria-autocomplete="list" aria-controls="appointment-patient-results" placeholder="Digite o nome ou telefone" value="'+esc(selected?.full_name||'')+'" required></label>'+
+      '<input type="hidden" name="patient_id" value="'+esc(selected?.id||'')+'">'+
+      '<div id="appointment-patient-results" class="patient-search-results" role="listbox" aria-label="Pacientes encontrados"></div>'+
+      '<div id="appointment-patient-selected" class="patient-selected" '+(selected?'':'hidden')+'><span>Paciente selecionado: <b>'+esc(selected?.full_name||'')+'</b></span><button type="button">Trocar</button></div>'+
+      '<p id="appointment-patient-status" class="patient-search-status">'+(selected?'Paciente selecionado.':'Escolha um paciente da lista de resultados.')+'</p>'+
+      '<label>Procedimento ou motivo<input name="procedure_name" required placeholder="Ex.: Avaliação"></label>'+
+      '<div class="form-grid"><label>Início<input name="starts_at" type="datetime-local" required value="'+range.start+'"></label><label>Término<input name="ends_at" type="datetime-local" required value="'+range.end+'"></label></div>'+
+      '<label>Observações<textarea name="notes" rows="3"></textarea></label>'+
+      '<div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar compromisso</button></div>'+
+    '</form></div>';
+}
 
 function fiscalModal(){return `<div class="modal-card"><div class="modal-head"><div><h2>Registrar nota fiscal</h2><p>Salve o documento e vincule-o ao paciente. A emissão municipal será conectada depois ao provedor fiscal.</p></div><button data-action="close">×</button></div><form id="fiscal-form" class="data-form"><label>Paciente<select name="patient_id"><option value="">Sem paciente vinculado</option>${patients.map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}</select></label><div class="form-grid"><label>Tipo<select name="document_type"><option value="nfse">NFS-e</option><option value="receipt">Recibo</option></select></label><label>Valor<input name="amount" type="number" min="0" step="0.01" required value="0"></label></div><div class="form-grid"><label>Status<select name="status"><option value="draft">Rascunho</option><option value="issued">Emitida</option></select></label><label>Data<input name="issued_at" type="date"></label></div><div class="form-grid"><label>Provedor<input name="provider" placeholder="Ex.: Prefeitura, eNotas"></label><label>Referência<input name="provider_reference" placeholder="Número ou código"></label></div><label>Link do documento<input name="document_url" type="url" placeholder="https://..."></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar registro</button></div></form></div>`;}
 
@@ -118,14 +261,66 @@ function accountModal(){return `<div class="modal-card"><div class="modal-head">
 
 function renderModal(){if(modal?.type==='patient')return `<div class="modal-backdrop"><div>${patientModal(modal.id)}</div></div>`;if(modal?.type==='new-patient')return `<div class="modal-backdrop"><div>${newPatientModal()}</div></div>`;if(modal?.type==='appointment')return `<div class="modal-backdrop"><div>${appointmentModal()}</div></div>`;if(modal?.type==='prescription')return `<div class="modal-backdrop"><div>${prescriptionModal(modal.patientId||'')}</div></div>`;if(modal?.type==='fiscal')return `<div class="modal-backdrop"><div>${fiscalModal()}</div></div>`;return `<div class="modal-backdrop"><div>${accountModal()}</div></div>`;}
 
-function render(){const pages={home:homePage,agenda:agendaPage,patients:patientsPage,prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};app.innerHTML=shell((pages[route]||homePage)());bind();window.dispatchEvent(new CustomEvent('alegrare:rendered'));}
-function bind(){document.querySelectorAll('[data-route]').forEach(el=>el.onclick=()=>location.hash=`#/${el.dataset.route}`);document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>action(el.dataset.action,el.dataset.id));document.querySelector('#patient-form')?.addEventListener('submit',savePatient);document.querySelector('#appointment-form')?.addEventListener('submit',saveAppointment);document.querySelector('#prescription-form')?.addEventListener('submit',savePrescription);document.querySelector('#fiscal-form')?.addEventListener('submit',saveFiscal);const search=document.querySelector('#med-search');if(search)search.oninput=()=>suggest(search.value);}
+function render(){
+  if(agendaCalendar){agendaCalendar.destroy();agendaCalendar=null;}
+  document.body.classList.remove('calendar-overlay-open');
+  const pages={home:homePage,agenda:agendaPage,patients:patientsPage,prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};
+  app.innerHTML=shell((pages[route]||homePage)());
+  bind();
+  if(route==='agenda'){
+    agendaCalendar=mountAgendaCalendar({
+      element:document.querySelector('#agenda-calendar'),
+      clinicId:profile.clinic_id,
+      patients,
+      loadAppointments:fetchCalendarAppointments,
+      onCreate:(start,end,patientId)=>{calendarExpanded=false;modal={type:'appointment',patientId:patientId||'',startsAt:start.toISOString(),endsAt:end.toISOString()};render();document.querySelector('#appointment-patient-search')?.focus();},
+      onManage:manageAppointment,
+      onReschedule:saveCalendarReschedule,
+      onError:error=>toast(error?.message||'Não foi possível carregar a agenda.',true),
+      onSearchChange:(value,patientId)=>{calendarSearchTerm=value;calendarPatientId=patientId||'';},
+      onExpandChange:value=>{calendarExpanded=value;},
+      searchInput:document.querySelector('#agenda-patient-search'),
+      patientResults:document.querySelector('#agenda-patient-results'),
+      searchStatus:document.querySelector('#agenda-search-status'),
+      expandButton:document.querySelector('#calendar-expand'),
+      expanded:calendarExpanded,
+      initialSearch:calendarSearchTerm,
+      initialPatientId:calendarPatientId
+    });
+  }
+  window.dispatchEvent(new CustomEvent('alegrare:rendered'));
+}
+function bind(){
+  document.querySelectorAll('[data-route]').forEach(el=>el.onclick=()=>location.hash='#/'+el.dataset.route);
+  document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>action(el.dataset.action,el.dataset.id));
+  document.querySelector('#patient-form')?.addEventListener('submit',savePatient);
+  document.querySelector('#appointment-form')?.addEventListener('submit',saveAppointment);
+  document.querySelector('#prescription-form')?.addEventListener('submit',savePrescription);
+  document.querySelector('#fiscal-form')?.addEventListener('submit',saveFiscal);
+  const search=document.querySelector('#med-search');if(search)search.oninput=()=>suggest(search.value);
+  bindAppointmentPatientSearch();
+}
 
 function suggest(term){const box=document.querySelector('#med-suggestions'),q=term.trim().toLocaleLowerCase('pt-BR');if(!box||q.length<2){if(box){box.innerHTML='';box.classList.remove('open');}return;}const found=medications.filter(m=>m.display_name.toLocaleLowerCase('pt-BR').startsWith(q)||(m.active_ingredient||'').toLocaleLowerCase('pt-BR').startsWith(q)).slice(0,8);box.innerHTML=found.length?found.map(m=>`<button type="button" data-med-id="${m.id}"><b>${esc(m.display_name)}</b><small>${esc(m.active_ingredient||'Princípio ativo não informado')}</small></button>`).join(''):'<div class="no-result">Nenhum medicamento encontrado.</div>';box.classList.add('open');box.querySelectorAll('[data-med-id]').forEach(b=>b.onclick=()=>{const m=medications.find(x=>x.id===b.dataset.medId);if(m&&!selectedMeds.some(x=>x.id===m.id))selectedMeds.push(m);document.querySelector('#selected-meds').innerHTML=selectedMedications();document.querySelector('#med-search').value='';box.classList.remove('open');bind();});}
 
 async function savePatient(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,full_name:String(fd.get('full_name')).trim(),phone:String(fd.get('phone')).trim()||null,email:String(fd.get('email')).trim()||null,current_treatment:String(fd.get('current_treatment')).trim()||null,notes:String(fd.get('notes')).trim()||null};const {data,error}=await supabase.from('patients').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}patients.push(data);patients.sort((a,b)=>a.full_name.localeCompare(b.full_name,'pt-BR'));modal=null;render();toast('Paciente cadastrado.');}
 
-async function saveAppointment(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget),start=new Date(String(fd.get('starts_at'))),end=new Date(String(fd.get('ends_at')));if(end<=start){busy=false;toast('O término precisa ser depois do início.',true);return;}const payload={clinic_id:profile.clinic_id,patient_id:String(fd.get('patient_id')),professional_id:profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:String(fd.get('notes')).trim()||null,created_by:profile.id};const {data,error}=await supabase.from('appointments').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}appointments.push(data);appointments.sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));modal=null;location.hash='#/agenda';toast('Compromisso agendado.');}
+async function saveAppointment(e){
+  e.preventDefault();if(busy)return;
+  const form=e.currentTarget,fd=new FormData(form),patientId=String(fd.get('patient_id')||'');
+  if(!patientId||!patients.some(p=>p.id===patientId)){toast('Escolha um paciente cadastrado na lista.',true);document.querySelector('#appointment-patient-search')?.focus();return;}
+  const start=new Date(String(fd.get('starts_at'))),end=new Date(String(fd.get('ends_at')));
+  if(!Number.isFinite(+start)||!Number.isFinite(+end)||end<=start){toast('O término precisa ser depois do início.',true);return;}
+  busy=true;
+  const payload={clinic_id:profile.clinic_id,patient_id:patientId,professional_id:profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:String(fd.get('notes')).trim()||null,created_by:profile.id};
+  const {data,error}=await supabase.from('appointments').insert(payload).select('*').single();
+  busy=false;
+  if(error){toast(error.message,true);return;}
+  appointments.push(data);appointments.sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));modal=null;
+  if(location.hash==='#/agenda'||!location.hash){route='agenda';location.hash='#/agenda';render();}
+  else location.hash='#/agenda';
+  toast('Compromisso agendado.');
+}
 
 async function savePrescription(e){e.preventDefault();if(busy)return;if(!selectedMeds.length){toast('Adicione ao menos um medicamento.',true);return;}busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,patient_id:String(fd.get('patient_id')),title:String(fd.get('title')).trim(),body:String(fd.get('body')).trim(),status:'pending_signature',author_id:profile.id};const created=await supabase.from('prescriptions').insert(payload).select('*').single();if(created.error){busy=false;toast(created.error.message,true);return;}const items=selectedMeds.map((m,i)=>({clinic_id:profile.clinic_id,prescription_id:created.data.id,medication_id:m.id,medication_name:m.display_name,instructions:payload.body,position:i}));const itemResult=await supabase.from('prescription_items').insert(items).select('id,medication_id,medication_name,instructions,position');busy=false;if(itemResult.error){await supabase.from('prescriptions').delete().eq('id',created.data.id);toast(itemResult.error.message,true);return;}prescriptions.unshift({...created.data,prescription_items:itemResult.data});selectedMeds=[];modal=null;location.hash='#/prescriptions';render();toast('Prescrição criada e pronta para assinatura.');}
 
@@ -140,7 +335,25 @@ async function signPrescription(id){
   busy=false;const item=prescriptions.find(p=>p.id===id);if(item)item.status='signed';render();toast('Assinatura eletrônica registrada.');
 }
 
-async function action(name,id){if(name==='close'){modal=null;selectedMeds=[];render();return;}if(name==='page-agenda'){await loadPage('agenda',Number(id));return;}if(name==='page-prescriptions'){await loadPage('prescriptions',Number(id));return;}if(name==='page-fiscal'){await loadPage('fiscal',Number(id));return;}if(name==='new-patient'){modal={type:'new-patient'};render();return;}if(name==='open-patient'){modal={type:'patient',id};render();return;}if(name==='new-appointment'){if(!patients.length){toast('Cadastre um paciente antes de agendar.',true);location.hash='#/patients';return;}modal={type:'appointment'};render();return;}if(name==='new-rx'||name==='new-rx-for'){if(!patients.length){toast('Cadastre um paciente antes de prescrever.',true);location.hash='#/patients';return;}selectedMeds=[];modal={type:'prescription',patientId:name==='new-rx-for'?id:''};render();return;}if(name==='new-fiscal'){modal={type:'fiscal'};render();return;}if(name==='remove-med'){selectedMeds=selectedMeds.filter(m=>m.id!==id);document.querySelector('#selected-meds').innerHTML=selectedMedications();bind();return;}if(name==='sign-rx'){await signPrescription(id);return;}if(name==='account'){modal={type:'account'};render();return;}if(name==='logout'){await supabase.auth.signOut();return;}if(name==='upload-doc')window.dispatchEvent(new CustomEvent('alegrare:upload-document'));}
+async function action(name,id){
+  if(name==='close'){modal=null;selectedMeds=[];render();return;}
+  if(name==='page-agenda'){await loadPage('agenda',Number(id));return;}
+  if(name==='page-prescriptions'){await loadPage('prescriptions',Number(id));return;}
+  if(name==='page-fiscal'){await loadPage('fiscal',Number(id));return;}
+  if(name==='new-patient'){modal={type:'new-patient'};render();return;}
+  if(name==='open-patient'){modal={type:'patient',id};render();return;}
+  if(name==='new-appointment'){
+    if(!patients.length){toast('Cadastre um paciente antes de agendar.',true);location.hash='#/patients';return;}
+    modal={type:'appointment',patientId:calendarPatientId||''};render();document.querySelector('#appointment-patient-search')?.focus();return;
+  }
+  if(name==='new-rx'||name==='new-rx-for'){if(!patients.length){toast('Cadastre um paciente antes de prescrever.',true);location.hash='#/patients';return;}selectedMeds=[];modal={type:'prescription',patientId:name==='new-rx-for'?id:''};render();return;}
+  if(name==='new-fiscal'){modal={type:'fiscal'};render();return;}
+  if(name==='remove-med'){selectedMeds=selectedMeds.filter(m=>m.id!==id);document.querySelector('#selected-meds').innerHTML=selectedMedications();bind();return;}
+  if(name==='sign-rx'){await signPrescription(id);return;}
+  if(name==='account'){modal={type:'account'};render();return;}
+  if(name==='logout'){await supabase.auth.signOut();return;}
+  if(name==='upload-doc')window.dispatchEvent(new CustomEvent('alegrare:upload-document'));
+}
 
 window.addEventListener('hashchange',()=>{if(patientSigningRoute())return;route=location.hash.replace('#/','').split('/')[0]||'home';modal=null;selectedMeds=[];if(session)render();});
 supabase.auth.onAuthStateChange((event,next)=>{session=next;if(event==='SIGNED_OUT'&&!patientSigningRoute())loginScreen();});
@@ -150,11 +363,5 @@ document.addEventListener('click',event=>{
   const button=event.target.closest('[data-consultation]');
   if(!button||!profile)return;
   const appointment=appointments.find(item=>item.id===button.dataset.consultation);
-  if(!appointment)return;
-  openAppointmentCare(appointment,patient(appointment.patient_id),profile.clinic_id,async()=>{
-    modal=null;
-    pageState={agenda:1,prescriptions:1,fiscal:1};
-    try {await loadWorkspace();render();toast('Consulta atualizada.');}
-    catch {toast('Consulta salva. Atualize a página para recarregar a agenda.',true);}
-  });
+  if(appointment)manageAppointment(appointment);
 });
