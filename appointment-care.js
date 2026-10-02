@@ -1,16 +1,18 @@
 import { supabase } from './supabase-client.js';
+import { validateAppointment, friendlyAgendaError } from './agenda-rules.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localDate = value => { const d=new Date(value); return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16); };
 const statuses = {scheduled:'Agendada',confirmed:'Confirmada',completed:'Compareceu / concluída',no_show:'Faltou',cancelled:'Cancelada'};
 
-export function openAppointmentCare(appointment, patient, clinicId, onSaved){
+export function openAppointmentCare(appointment, patient, clinicId, onSaved, context={}){
   document.querySelector('#appointment-care')?.remove();
   const dialog=document.createElement('dialog');
   dialog.id='appointment-care';
   dialog.className='consultation-dialog';
   dialog.innerHTML=`<form class="data-form">
     <div class="modal-head"><div><h2>Consulta</h2><p>${escape(patient?.full_name||'Paciente não vinculado')}</p></div><button type="button" data-close aria-label="Fechar">×</button></div>
+    ${appointment.approval_status==='pending'?`<div class="approval-notice"><b>Aguardando confirmação da responsável</b><p>O horário está reservado até a confirmação ou o cancelamento.</p>${context.availability?.owner?'<label><input type="checkbox" name="approve"> Confirmar este agendamento</label>':''}</div>`:''}
     <label>Procedimento<input name="procedure" required value="${escape(appointment.procedure_name||'Consulta')}"></label>
     <label>Situação<select name="status">${Object.entries(statuses).map(([value,label])=>`<option value="${value}" ${appointment.status===value?'selected':''}>${label}</option>`).join('')}</select></label>
     <div class="form-grid"><label>Início<input name="start" type="datetime-local" required value="${localDate(appointment.starts_at)}"></label><label>Término<input name="end" type="datetime-local" required value="${localDate(appointment.ends_at)}"></label></div>
@@ -52,6 +54,8 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved){
     const payload={starts_at:start.toISOString(),ends_at:end.toISOString(),status:moved&&status==='confirmed'?'scheduled':status,procedure_name:form.elements.procedure.value.trim(),notes:notes||null};
     const buttons=dialog.querySelectorAll('button');buttons.forEach(b=>b.disabled=true);feedback.textContent='Salvando…';
     try {
+      if(status!=='cancelled'){await validateAppointment(clinicId,start,end,appointment.id);await context.availability?.check(start,end);}
+      if(form.elements.approve?.checked)payload.approval_status='approved';
       let query=supabase.from('appointments').update(payload).eq('id',appointment.id).eq('clinic_id',clinicId);
       if(appointment.updated_at)query=query.eq('updated_at',appointment.updated_at);
       else query=query.eq('starts_at',appointment.starts_at).eq('ends_at',appointment.ends_at).eq('status',appointment.status);
@@ -59,7 +63,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved){
       if(error)throw error;
       if(!data)throw new Error('A consulta foi alterada por outra pessoa ou seu perfil não permite editar. Atualize a agenda e tente novamente.');
       close();await onSaved(data);
-    } catch(error){feedback.textContent=error.message||'Não foi possível salvar. Tente novamente.';}
+    } catch(error){feedback.textContent=friendlyAgendaError(error);}
     finally {buttons.forEach(b=>b.disabled=false);}
   };
 }

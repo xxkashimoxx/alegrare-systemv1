@@ -1,0 +1,53 @@
+import { supabase } from './supabase-client.js';
+import { overlap } from './agenda-rules.js';
+const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const local = value => { const d=new Date(value); return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16); };
+const days=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+export class AgendaAvailability {
+  constructor(profile, onChange) { this.profile=profile;this.onChange=onChange;this.settings=null;this.windows=[];this.ready=false; }
+  async load() {
+    const [settings,windows]=await Promise.all([supabase.from('agenda_settings').select('*').eq('clinic_id',this.profile.clinic_id).maybeSingle(),supabase.from('agenda_windows').select('*').eq('clinic_id',this.profile.clinic_id).gt('ends_at',new Date(Date.now()-86400000*31).toISOString()).order('starts_at')]);
+    this.error=settings.error||windows.error;this.ready=!this.error;
+    this.settings=settings.data;this.windows=windows.data||[];
+  }
+  get owner(){return this.settings?.owner_id===this.profile.id;}
+  async check(start,end){
+    if(!this.ready)return; // Conflict protection remains available before database activation.
+    const {error}=await supabase.rpc('check_agenda_slot',{p_clinic_id:this.profile.clinic_id,p_start:new Date(start).toISOString(),p_end:new Date(end).toISOString()});
+    if(error)throw error;
+  }
+  events(start,end){
+    const events=this.windows.filter(w=>overlap(start,end,w.starts_at,w.ends_at)).map(w=>({id:'window:'+w.id,title:w.kind==='blocked'?'Bloqueado · '+(w.reason||'Indisponível'):'Disponível',start:w.starts_at,end:w.ends_at,display:'background',backgroundColor:w.kind==='blocked'?'#ef9c99':'#9cddbe',classNames:['agenda-'+w.kind],extendedProps:{window:w}}));
+    if(this.settings?.enforce_weekly){
+      const d=new Date(start);d.setHours(0,0,0,0);
+      for(;d<end;d.setDate(d.getDate()+1)){
+        const intervals=this.settings.weekly?.[d.getDay()]||[];
+        for(const range of intervals){const s=new Date(d),e=new Date(d);const [sh,sm]=range.start.split(':').map(Number),[eh,em]=range.end.split(':').map(Number);s.setHours(sh,sm,0,0);e.setHours(eh,em,0,0);events.push({start:s,end:e,display:'background',backgroundColor:'#9cddbe',classNames:['agenda-available']});}
+      }
+    }
+    return events;
+  }
+  panel(){
+    const pendingNote=this.settings?'Horários compartilhados com toda a equipe.':'Defina quem confirma os agendamentos e os horários de atendimento.';
+    return `<section class="card availability-summary"><div><h2>Disponibilidade e confirmação</h2><p>${esc(this.ready?pendingNote:'Configuração da disponibilidade aguardando ativação no banco.')}</p></div><div class="consultation-actions"><button class="secondary" data-agenda-config>Horários e notificações</button><button class="secondary" data-agenda-window ${!this.owner?'disabled':''}>Disponibilidade / bloqueio</button></div><div class="calendar-legend"><span><i class="available"></i>Disponível</span><span><i class="blocked"></i>Bloqueado</span><span><i class="pending"></i>Aguardando Daniela</span></div></section>`;
+  }
+  bind(root=document){root.querySelector('[data-agenda-config]')?.addEventListener('click',()=>this.configure());root.querySelector('[data-agenda-window]')?.addEventListener('click',()=>this.editWindow());}
+  dialog(html){const d=document.createElement('dialog');d.className='consultation-dialog';d.innerHTML=html;document.body.append(d);d.showModal();const close=()=>{d.close();d.remove();};d.querySelectorAll('[data-close]').forEach(b=>b.onclick=close);d.addEventListener('cancel',e=>{e.preventDefault();close();});return {d,close};}
+  async configure(){
+    if(!this.ready){this.showMessage('A configuração compartilhada ainda precisa ser ativada no banco. A verificação de consultas sobrepostas já funciona.');return;}
+    const {data:team,error}=await supabase.from('profiles').select('id,full_name').eq('clinic_id',this.profile.clinic_id);if(error){this.showMessage(error.message);return;}
+    const canEdit=this.owner||!this.settings;
+    const {d,close}=this.dialog(`<form class="data-form"><div class="modal-head"><h2>Horários e notificações</h2><button type="button" data-close aria-label="Fechar">×</button></div><label>Responsável pela confirmação<select name="owner" required ${this.settings?'disabled':''}>${(this.settings?team:(team||[]).filter(p=>p.id===this.profile.id)).map(p=>`<option value="${esc(p.id)}" ${p.id===(this.settings?.owner_id||this.profile.id)?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select></label><label>WhatsApp da responsável<input name="phone" type="tel" placeholder="+55 DDD número" value="${esc(this.settings?.notification_phone||'')}" ${!canEdit?'disabled':''}></label><p class="consultation-help">Para configurar pela primeira vez, entre com a conta da responsável. Envio automático de WhatsApp: ${this.settings?.notification_active?'conectado':'ainda não conectado'}. A confirmação acontece dentro do painel.</p><label class="availability-toggle"><input name="enforce" type="checkbox" ${this.settings?.enforce_weekly?'checked':''} ${!canEdit?'disabled':''}>Permitir agendamentos somente nos horários abaixo ou em disponibilidades extras</label><div class="weekly-hours">${days.map((name,i)=>{const ranges=this.settings?.weekly?.[i]||[];return `<fieldset><legend>${name}</legend>${[0,1].map(n=>`<div class="form-grid"><label>Das<input type="time" name="start-${i}-${n}" value="${esc(ranges[n]?.start||'')}" ${!canEdit?'disabled':''}></label><label>Até<input type="time" name="end-${i}-${n}" value="${esc(ranges[n]?.end||'')}" ${!canEdit?'disabled':''}></label></div>`).join('')}</fieldset>`;}).join('')}</div><p role="status"></p><div class="modal-actions"><button type="button" class="secondary" data-close>Fechar</button>${canEdit?'<button class="primary">Salvar configuração</button>':''}</div></form>`);
+    d.querySelector('form').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,fd=new FormData(f),weekly={};for(let i=0;i<7;i++){weekly[i]=[];for(let n=0;n<2;n++){const start=fd.get(`start-${i}-${n}`),end=fd.get(`end-${i}-${n}`);if(!start&&!end)continue;if(!start||!end||end<=start){f.querySelector('[role=status]').textContent='Confira os horários de '+days[i]+'.';return;}weekly[i].push({start,end});}weekly[i].sort((a,b)=>a.start.localeCompare(b.start));if(weekly[i][1]&&weekly[i][1].start<weekly[i][0].end){f.querySelector('[role=status]').textContent='Os períodos de '+days[i]+' estão sobrepostos.';return;}}
+      const phone=String(fd.get('phone')||'').replace(/[^\d+]/g,'');if(phone&&!/^\+55\d{10,11}$/.test(phone)){f.querySelector('[role=status]').textContent='Informe +55, DDD e o número completo.';return;}
+      const payload={clinic_id:this.profile.clinic_id,owner_id:this.settings?.owner_id||String(fd.get('owner')),notification_phone:phone||null,enforce_weekly:fd.has('enforce'),weekly};const b=f.querySelector('button.primary');b.disabled=true;const {error}=this.settings?await supabase.from('agenda_settings').update({notification_phone:payload.notification_phone,enforce_weekly:payload.enforce_weekly,weekly:payload.weekly}).eq('clinic_id',this.profile.clinic_id):await supabase.from('agenda_settings').insert(payload);b.disabled=false;if(error){f.querySelector('[role=status]').textContent=error.message;return;}close();await this.load();await this.onChange();};
+  }
+  showMessage(message){this.dialog(`<h2>Agenda</h2><p>${esc(message)}</p><button class="primary" data-close>Entendi</button>`);}
+  editWindow(start=new Date(),end=new Date(Date.now()+3600000),kind='blocked',allDay=false){
+    if(allDay)end=new Date(+end-1);
+    if(!this.owner){this.showMessage('Somente a responsável pela agenda pode alterar disponibilidades e bloqueios.');return;}
+    const {d,close}=this.dialog(`<form class="data-form"><div class="modal-head"><h2>Disponibilidade / bloqueio</h2><button type="button" data-close aria-label="Fechar">×</button></div><label>Tipo<select name="kind"><option value="blocked" ${kind==='blocked'?'selected':''}>Bloquear atendimento</option><option value="available" ${kind==='available'?'selected':''}>Abrir disponibilidade extra</option></select></label><label class="availability-toggle"><input type="checkbox" name="allDay" ${allDay?'checked':''}>Dia inteiro (inclui todas as datas selecionadas)</label><div class="form-grid"><label>Início<input name="start" type="datetime-local" required value="${local(start)}"></label><label>Término<input name="end" type="datetime-local" required value="${local(end)}"></label></div><label>Motivo<input name="reason" maxlength="160" placeholder="Ex.: viagem, intervalo, atendimento extra"></label><p role="status"></p><div class="modal-actions"><button type="button" class="secondary" data-close>Fechar</button><button class="primary">Salvar período</button></div></form><h3>Períodos cadastrados</h3><div class="agenda-window-list">${this.windows.map(w=>`<article><span><b>${w.kind==='blocked'?'Bloqueado':'Disponível'}</b><small>${esc(new Date(w.starts_at).toLocaleString('pt-BR'))} — ${esc(new Date(w.ends_at).toLocaleString('pt-BR'))}</small><small>${esc(w.reason||'')}</small></span><button class="secondary" data-remove="${esc(w.id)}">Remover</button></article>`).join('')||'<p>Nenhum período cadastrado.</p>'}</div>`);
+    d.querySelector('form').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,fd=new FormData(f),s=new Date(fd.get('start')),en=new Date(fd.get('end'));if(fd.has('allDay')){s.setHours(0,0,0,0);en.setHours(0,0,0,0);en.setDate(en.getDate()+1);}if(!Number.isFinite(+s)||!Number.isFinite(+en)||en<=s){f.querySelector('[role=status]').textContent='Confira o início e o término.';return;}const b=f.querySelector('.primary');b.disabled=true;const {data,error}=await supabase.rpc('save_agenda_window',{p_kind:String(fd.get('kind')),p_start:s.toISOString(),p_end:en.toISOString(),p_reason:String(fd.get('reason')||'').trim()});b.disabled=false;if(error){f.querySelector('[role=status]').textContent=error.message;return;}close();await this.load();await this.onChange();if(data?.existing_appointments)this.showMessage(`${data.existing_appointments} consulta(s) já existente(s) neste bloqueio precisam ser revistas. Elas foram preservadas; novos agendamentos neste período estão impedidos.`);};
+    d.querySelectorAll('[data-remove]').forEach(b=>b.onclick=async()=>{b.disabled=true;const {error}=await supabase.from('agenda_windows').delete().eq('id',b.dataset.remove).eq('clinic_id',this.profile.clinic_id);if(error){b.disabled=false;d.querySelector('[role=status]').textContent=error.message;return;}close();await this.load();await this.onChange();});
+  }
+}

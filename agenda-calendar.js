@@ -30,11 +30,12 @@ function escapeHtml(value) {
 
 function eventFor(appointment, patients, query, patientId = '') {
   const person = patients.find((item) => item.id === appointment.patient_id);
-  const colors = palette[appointment.status] || palette.scheduled;
+  const pending=appointment.approval_status==='pending'&&appointment.status!=='cancelled';
+  const colors = pending?{backgroundColor:'#b27a20',borderColor:'#966418'}:palette[appointment.status] || palette.scheduled;
   const canMove = !['cancelled', 'completed', 'no_show'].includes(appointment.status);
   return {
     id: appointment.id,
-    title: `${person?.full_name || 'Paciente'} · ${appointment.procedure_name || 'Consulta'}`,
+    title: `${pending?'A confirmar · ':''}${person?.full_name || 'Paciente'} · ${appointment.procedure_name || 'Consulta'}`,
     start: appointment.starts_at,
     end: appointment.ends_at,
     backgroundColor: colors.backgroundColor,
@@ -52,6 +53,7 @@ export function mountAgendaCalendar(options) {
     clinicId,
     patients = [],
     loadAppointments,
+    availability,
     onCreate,
     onManage,
     onReschedule,
@@ -101,6 +103,7 @@ export function mountAgendaCalendar(options) {
     let visible = 0;
     calendar.getEvents().forEach((event) => {
       const appointment = event.extendedProps.appointment;
+      if(!appointment)return;
       const show = (!selectedPatientId || appointment.patient_id === selectedPatientId)
         && matches(appointment, patients, activeQuery);
       event.setProp('display', show ? 'auto' : 'none');
@@ -208,7 +211,7 @@ export function mountAgendaCalendar(options) {
           if (disposed) return;
           lastRecords = records || [];
           updateSearchStatus(lastRecords);
-          success(lastRecords.map((record) => eventFor(record, patients, selectedPatientId ? '' : query(), selectedPatientId)));
+          success([...lastRecords.map((record) => eventFor(record, patients, selectedPatientId ? '' : query(), selectedPatientId)),...(availability?.events(fetchInfo.start,fetchInfo.end)||[])]);
         })
         .catch((error) => {
           if (disposed) return;
@@ -221,18 +224,20 @@ export function mountAgendaCalendar(options) {
     },
     dateClick(info) {
       const start = new Date(info.date);
-      if (info.allDay || info.view.type === 'dayGridMonth') start.setHours(9, 0, 0, 0);
-      onCreate?.(start, new Date(start.getTime() + 60 * 60 * 1000), selectedPatientId);
+      const marking=(document.querySelector('#agenda-mode')?.value||'appointment')!=='appointment';
+      if (info.allDay || info.view.type === 'dayGridMonth') start.setHours(marking?0:9, 0, 0, 0);
+      onCreate?.(start,new Date(start.getTime()+(marking&&info.allDay?24:1)*60*60*1000),selectedPatientId,{allDay:marking&&info.allDay});
     },
     select(info) {
       let start = new Date(info.start);
       let end = new Date(info.end);
-      if (info.allDay) {
+      const marking=(document.querySelector('#agenda-mode')?.value||'appointment')!=='appointment';
+      if (info.allDay && !marking) {
         start.setHours(9, 0, 0, 0);
         end = new Date(start.getTime() + 60 * 60 * 1000);
       }
       calendar.unselect();
-      onCreate?.(start, end, selectedPatientId);
+      onCreate?.(start,end,selectedPatientId,{allDay:marking&&info.allDay});
     },
     eventClick(info) {
       info.jsEvent.preventDefault();
