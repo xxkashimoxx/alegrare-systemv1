@@ -19,6 +19,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <p class="consultation-help">Para remarcar, altere o horário e salve. Confirmação de um horário anterior volta para “Agendada”.</p>
     <label>Observações<textarea name="notes" rows="3">${escape(appointment.notes||'')}</textarea></label>
     <label>Justificativa da falta, remarcação ou cancelamento<input name="reason" placeholder="Obrigatória ao registrar falta, remarcar ou cancelar"></label>
+    <section class="clinical-occurrence"><h3>Atendimento clínico não realizado</h3><p>Registre o que ocorreu e a conduta adotada. Pressão arterial é opcional; não há avaliação automática do resultado.</p><div class="form-grid"><label>Pressão sistólica (mmHg)<input name="bp_systolic" type="number" min="1" max="350" inputmode="numeric"></label><label>Pressão diastólica (mmHg)<input name="bp_diastolic" type="number" min="1" max="250" inputmode="numeric"></label></div><label>Ocorrência / motivo clínico<textarea name="occurrence" rows="3" placeholder="Ex.: aferição e decisão profissional de adiar o atendimento"></textarea></label></section>
     <section class="consultation-reminders"><h3>Retorno</h3><p>Defina uma data de referência. O aviso fica no painel; o horário do retorno só é reservado depois de confirmar a disponibilidade na agenda.</p><div class="form-grid"><label>Data desejada<input name="return_date" type="date"></label><label>Hora sugerida<input name="return_time" type="time" value="09:00"></label></div><button type="button" class="secondary" data-return>Marcar retorno nesta data</button></section>
     <section class="consultation-reminders"><h3>Lembretes da consulta</h3><p>Envio automático e histórico de entrega ainda não estão conectados. As opções abaixo usam o horário salvo.</p><div class="consultation-actions"><button type="button" class="secondary" data-calendar>Adicionar ao calendário</button><button type="button" class="secondary" data-copy>Copiar lembrete do paciente</button></div></section>
     <p role="status" class="consultation-feedback"></p>
@@ -57,8 +58,14 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     const reason=form.elements.reason.value.trim(),status=form.elements.status.value;
     if((moved||(['cancelled','no_show'].includes(status)&&appointment.status!==status))&&!reason){feedback.textContent='Informe a justificativa da falta, remarcação ou cancelamento.';form.elements.reason.focus();return;}
     if(['checked_in','completed','no_show'].includes(status)&&start>new Date()){feedback.textContent='Presença ou falta só podem ser registradas após o início da consulta.';return;}
+    const occurrence=form.elements.occurrence.value.trim();const systolic=form.elements.bp_systolic.value,diastolic=form.elements.bp_diastolic.value;
+    if((systolic||diastolic)&&(!systolic||!diastolic)){feedback.textContent='Preencha os dois valores da pressão ou deixe ambos vazios.';return;}
+    if((systolic||diastolic)&&!occurrence){feedback.textContent='Descreva a ocorrência clínica associada à aferição.';return;}
+    if(occurrence&&!['cancelled','no_show'].includes(status)){feedback.textContent='Para registrar um atendimento não realizado, marque Cancelada ou Não veio / falta.';return;}
+    if(occurrence&&!reason){feedback.textContent='Informe também a justificativa do não atendimento.';return;}
     let notes=form.elements.notes.value.trim();
     if(reason)notes+=`${notes?'\n\n':''}[${new Date().toISOString()}] ${moved?'Remarcação de '+appointment.starts_at+' para '+start.toISOString():'Alteração para '+statuses[status]}: ${reason}`;
+    if(occurrence)notes+=`${notes?'\n\n':''}[Ocorrência clínica] ${new Date().toISOString()} · ${occurrence}${systolic?` · Pressão aferida: ${systolic}/${diastolic} mmHg`:''}`;
     const payload={starts_at:start.toISOString(),ends_at:end.toISOString(),status:moved&&status==='confirmed'?'scheduled':status,procedure_name:form.elements.procedure.value.trim(),notes:notes||null};
     const buttons=dialog.querySelectorAll('button');buttons.forEach(b=>b.disabled=true);feedback.textContent='Salvando…';
     try {
