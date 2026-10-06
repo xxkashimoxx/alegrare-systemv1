@@ -1,3 +1,5 @@
+import {patientDisplayName,patientMatches} from './clinic-search.js';
+
 const palette = {
   scheduled: { backgroundColor: '#2782b6', borderColor: '#1c6d9b' },
   confirmed: { backgroundColor: '#2f8b65', borderColor: '#24714f' },
@@ -18,6 +20,7 @@ function matches(appointment, patients, query) {
   const person = patients.find((item) => item.id === appointment.patient_id);
   return normalize([
     person?.full_name,
+    person?.social_name,
     person?.phone,
     appointment.procedure_name,
   ].filter(Boolean).join(' ')).includes(query);
@@ -36,7 +39,7 @@ function eventFor(appointment, patients, query, patientId = '') {
   const canMove = !['cancelled', 'completed', 'no_show'].includes(appointment.status);
   return {
     id: appointment.id,
-    title: `${pending?'A confirmar · ':''}${person?.full_name || 'Paciente'} · ${appointment.procedure_name || 'Consulta'}`,
+    title: `${pending?'A confirmar · ':''}${patientDisplayName(person)} · ${appointment.procedure_name || 'Consulta'}`,
     start: appointment.starts_at,
     end: appointment.ends_at,
     backgroundColor: colors.backgroundColor,
@@ -93,7 +96,7 @@ export function mountAgendaCalendar(options) {
     }).length;
     const selectedPatient = patients.find((item) => item.id === selectedPatientId);
     searchStatus.textContent = selectedPatient
-      ? `${selectedPatient.full_name}: ${visible} compromisso${visible === 1 ? '' : 's'} neste período.`
+      ? `${patientDisplayName(selectedPatient)}: ${visible} compromisso${visible === 1 ? '' : 's'} neste período.`
       : searchValue.trim()
       ? `${visible} compromisso${visible === 1 ? '' : 's'} encontrado${visible === 1 ? '' : 's'} neste período.`
       : `${records.length} compromisso${records.length === 1 ? '' : 's'} neste período.`;
@@ -113,7 +116,7 @@ export function mountAgendaCalendar(options) {
     if (searchStatus) {
       const selectedPatient = patients.find((item) => item.id === selectedPatientId);
       searchStatus.textContent = selectedPatient
-        ? `${selectedPatient.full_name}: ${visible} compromisso${visible === 1 ? '' : 's'} neste período.`
+        ? `${patientDisplayName(selectedPatient)}: ${visible} compromisso${visible === 1 ? '' : 's'} neste período.`
         : searchValue.trim()
         ? `${visible} compromisso${visible === 1 ? '' : 's'} encontrado${visible === 1 ? '' : 's'} neste período.`
         : `${lastRecords.length} compromisso${lastRecords.length === 1 ? '' : 's'} neste período.`;
@@ -128,9 +131,9 @@ export function mountAgendaCalendar(options) {
       patientResults.classList.remove('open');
       return;
     }
-    const found = patients.filter((person) => normalize(`${person.full_name || ''} ${person.phone || ''}`).includes(activeQuery)).slice(0, 8);
+    const found = patients.filter((person) => patientMatches(activeQuery,person)).slice(0, 8);
     patientResults.innerHTML = found.length
-      ? found.map((person) => `<button type="button" role="option" data-agenda-patient="${escapeHtml(person.id)}"><b>${escapeHtml(person.full_name)}</b><small>${escapeHtml(person.phone || 'Telefone não informado')}</small></button>`).join('')
+      ? found.map((person) => `<button type="button" role="option" data-agenda-patient="${escapeHtml(person.id)}"><b>${escapeHtml(patientDisplayName(person))}</b><small>${person.social_name&&person.social_name!==person.full_name?`Cadastro: ${escapeHtml(person.full_name)} · `:''}${escapeHtml(person.phone || 'Telefone não informado')}</small></button>`).join('')
       : `<div class="patient-search-empty">Nenhum paciente cadastrado corresponde a esta busca.</div>`;
     patientResults.classList.add('open');
   }
@@ -139,8 +142,8 @@ export function mountAgendaCalendar(options) {
     const selected = patients.find((person) => person.id === patientId);
     if (!selected) return;
     selectedPatientId = selected.id;
-    searchValue = selected.full_name;
-    if (searchInput) searchInput.value = selected.full_name;
+    searchValue = patientDisplayName(selected);
+    if (searchInput) searchInput.value = searchValue;
     patientResults?.classList.remove('open');
     if (patientResults) patientResults.innerHTML = '';
     onSearchChange?.(searchValue, selectedPatientId);
