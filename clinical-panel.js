@@ -6,6 +6,18 @@ const deciduous = [5,6,7,8].flatMap(q => Array.from({length:5},(_,i) => `${q}${i
 const teeth = [...permanent,...deciduous];
 const toothLabel = code => `${code} · ${permanent.includes(code)?'permanente':deciduous.includes(code)?'decíduo':'outra identificação'}`;
 const date = value => value ? new Date(value).toLocaleDateString('pt-BR') : 'Sem data';
+const answerText = value => {
+  if (value == null || value === '') return 'Não informado';
+  if (Array.isArray(value)) return value.map(answerText).join(', ');
+  if (typeof value === 'object') return value.label || value.value || 'Não informado';
+  return String(value);
+};
+const renderAnswers = answers => {
+  if (!Array.isArray(answers) || !answers.length) return '<p class="clinical-empty">Nenhuma resposta registrada.</p>';
+  const entries = answers.filter(item => item && typeof item === 'object' && item.question);
+  if (!entries.length) return '<p class="clinical-empty">Nenhuma resposta registrada.</p>';
+  return `<ol class="clinical-answers">${entries.map(item => `<li class="clinical-answer"><span class="clinical-question">${esc(item.question)}</span><span class="clinical-response">${esc(answerText(item.answer))}</span>${item.alert ? `<span class="clinical-answer-alert">Atenção: ${esc(item.alert)}</span>` : ''}</li>`).join('')}</ol>`;
+};
 
 // The same clinical source is read by the patient record and the finance panel.
 export class ClinicalPanel {
@@ -43,7 +55,7 @@ export class ClinicalPanel {
     this.host.querySelector('[role=status]').textContent='Dados clínicos da clínica. Alterações são gravadas diretamente no Supabase.';
     host.innerHTML=`<section class="clinical-section"><h3>Anamnese e observações internas</h3><p>${current?`Registro de ${date(current.anamnesis_date)} · ${esc(current.template_description||'Anamnese geral')}`:'Nenhuma anamnese importada para este paciente.'}</p>
       ${current?`<form data-anamnesis class="data-form"><label>Observações internas sobre saúde e continuidade do cuidado<textarea name="notes" rows="4" placeholder="Alergias, medicações, condições, alertas e acompanhamento, conforme avaliação profissional">${esc(current.notes||'')}</textarea></label>${custom.map(q=>`<label>${esc(q.question)}<input data-internal-question="${q.id}" value="${esc(current.source_payload?.alegrare_internal_fields?.[q.id]||'')}" ${q.required?'required':''}></label>`).join('')}<p class="privacy-hint">Uso interno da equipe autorizada. Estes campos não integram mensagens nem links para o paciente.</p><button class="secondary">Salvar observações</button></form>`:'<p>Registre a anamnese clínica antes de editar observações vinculadas a ela.</p>'}
-      <details><summary>Ver respostas da anamnese</summary><pre class="clinical-answers">${esc(current?JSON.stringify(current.answers,null,2):'Sem respostas')}</pre></details>
+      <details class="clinical-answer-details"><summary>Ver respostas da anamnese${Array.isArray(current?.answers)&&current.answers.length?` (${current.answers.length})`:''}</summary>${renderAnswers(current?.answers)}</details>
       ${current?.answers?.length?'<button type="button" class="secondary" data-anamnesis-document>Preparar anamnese para assinatura</button>':''}
       <h4>Parâmetros internos da clínica</h4><ul>${custom.map(q=>`<li>${esc(q.question)}${q.required?' · obrigatório':''}</li>`).join('')||'<li>Nenhum parâmetro adicional.</li>'}</ul>
       ${['owner','dentist'].includes(this.profile.role)?`<form data-parameter class="data-form form-grid"><label>Novo parâmetro para futuras anamneses<input name="question" required maxlength="200" placeholder="Ex.: condição que interfere no atendimento"></label><label><input type="checkbox" name="required"> Obrigatório</label><button class="secondary">Adicionar parâmetro</button></form>`:'<p>A profissional responsável pode acrescentar parâmetros.</p>'}</section>
