@@ -56,7 +56,7 @@ async function openUpload(){
     const m=modal(`
       <div class="real-modal-head"><div><small>DOCUMENTO</small><h2>Enviar para assinatura</h2><p>Um fluxo só: escolha o arquivo, o paciente e quem precisa assinar.</p></div><button data-real-close>×</button></div>
       <form id="real-upload-form" class="real-form">
-        <label>Paciente<select name="patient" required><option value="">Selecione</option>${patients.map(p=>`<option value="${p.id}" data-name="${esc(p.full_name)}">${esc(p.full_name)}</option>`).join('')}</select></label>
+        <label>Paciente<select name="patient" required><option value="">Selecione</option>${patients.map(p=>`<option value="${p.id}" data-name="${esc(p.full_name)}" data-phone="${esc(p.phone||'')}" data-email="${esc(p.email||'')}">${esc(p.full_name)}</option>`).join('')}</select></label>
         <label>Título do documento<input name="title" placeholder="Ex.: Termo de consentimento" required></label>
         <label>Arquivo<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.docx" required><small>PDF, imagem ou DOCX · até 20 MB</small></label>
         <fieldset><legend>Quem assina?</legend>
@@ -101,7 +101,7 @@ async function uploadDocument(e){
     }
     const sIns=await supabase.from('document_signers').insert(signers); if(sIns.error) throw sIns.error;
     closeModal(); await refreshDocuments(1);
-    if(patientToken) showPatientLink(patientToken,title,patientName); else toast('Documento enviado para assinatura profissional.');
+    if(patientToken){const contact=form.elements.patient.selectedOptions[0]?.dataset||{};showPatientLink(patientToken,title,patientName,contact.phone,contact.email);} else toast('Documento enviado para assinatura profissional.');
   }catch(err){
     console.error(err);
     if(path) await supabase.storage.from('clinic-documents').remove([path]).catch(()=>{});
@@ -111,11 +111,14 @@ async function uploadDocument(e){
 }
 
 function patientLink(token){ return `${location.origin}${location.pathname}#/assinar/${token}`; }
-function showPatientLink(token,title,patient){
+function showPatientLink(token,title,patient,phone,email){
   const link=patientLink(token);
+  const digits=String(phone||'').replace(/\D/g,'');const number=digits.length===10||digits.length===11?`55${digits}`:digits;
+  const message=`Olá! A Alegrare disponibilizou um documento para sua leitura e assinatura. Acesse seu link individual: ${link}`;
+  const encoded=encodeURIComponent(message);
   const m=modal(`
     <div class="real-modal-head"><div><small>LINK DO PACIENTE</small><h2>Documento pronto</h2><p>${esc(patient)} pode abrir e assinar sem acessar o painel.</p></div><button data-real-close>×</button></div>
-    <div class="real-success"><b>${esc(title)}</b><label>Link de assinatura<div class="real-copy"><input readonly value="${esc(link)}"><button class="real-btn primary" id="real-copy-link">Copiar link</button></div></label><p>O arquivo permanece privado no Storage. O link libera acesso temporário somente após validar o token de assinatura.</p></div>`);
+    <div class="real-success"><b>${esc(title)}</b><label>Link de assinatura<div class="real-copy"><input readonly value="${esc(link)}"><button class="real-btn primary" id="real-copy-link">Copiar link</button></div></label><p>O arquivo permanece privado no Storage. O link libera acesso temporário somente após validar o token de assinatura.</p><p class="privacy-hint">Confira o destinatário antes de abrir o aplicativo de mensagens. Nenhuma mensagem é enviada automaticamente.</p><div class="consultation-actions">${/^55\d{10,11}$/.test(number)?`<a class="real-btn ghost" target="_blank" rel="noopener noreferrer" href="https://wa.me/${number}?text=${encoded}">Abrir WhatsApp</a><a class="real-btn ghost" href="sms:+${number}?body=${encoded}">Abrir SMS</a>`:''}${email?`<a class="real-btn ghost" href="mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('Documento Alegrare para assinatura')}&body=${encoded}">Abrir e-mail</a>`:''}</div></div>`);
   $('#real-copy-link',m).addEventListener('click',async()=>{await navigator.clipboard.writeText(link);toast('Link copiado.');});
 }
 
@@ -195,7 +198,7 @@ async function renderPatientSigning(){
   if(!isPatientRoute()) return false;
   const token=tokenFromRoute();if(patientRenderToken===token)return true;patientRenderToken=token;
   const app=$('#app'); if(!app) return true;
-  app.innerHTML=`<main class="patient-sign-page"><section class="patient-sign-shell"><div class="sign-brand"><span>A</span><div><b>Alegrare</b><small>ODONTOLOGIA ESPECIAL</small></div></div><div id="patient-sign-content" class="patient-sign-card"><p>Carregando documento...</p></div></section></main>`;
+  app.innerHTML=`<main class="patient-sign-page"><section class="patient-sign-shell"><div class="sign-brand"><span>A</span><div><b>Alegrare</b><small>ODONTOLOGIA ESPECIAL</small></div></div><div id="patient-sign-content" class="patient-sign-card"><p>Carregando documento...</p></div><p class="privacy-hint" role="note">Dados pessoais e de saúde: este link é individual. Abra somente se você for o destinatário e não encaminhe a terceiros.</p></section></main>`;
   const host=$('#patient-sign-content');
   try{
     const res=await fetch(`${SIGN_FUNCTION}?token=${encodeURIComponent(tokenFromRoute())}`,{headers:{apikey:SUPABASE_KEY}}); const data=await res.json();

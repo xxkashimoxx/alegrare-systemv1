@@ -1,6 +1,7 @@
 const palette = {
   scheduled: { backgroundColor: '#2782b6', borderColor: '#1c6d9b' },
   confirmed: { backgroundColor: '#2f8b65', borderColor: '#24714f' },
+  checked_in: { backgroundColor: '#2f8b65', borderColor: '#24714f' },
   completed: { backgroundColor: '#71818b', borderColor: '#5d6b74' },
   no_show: { backgroundColor: '#c27b32', borderColor: '#a96322' },
   cancelled: { backgroundColor: '#9aa4ab', borderColor: '#7d878e' },

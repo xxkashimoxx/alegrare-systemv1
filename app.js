@@ -8,6 +8,7 @@ import { escapeText, printReport } from './clinic-export.js';
 import { PrescriptionBrowser } from './prescription-browser.js';
 import { FinancePanel } from './finance-panel.js';
 import { loadPatientDirectory } from './clinic-directory.js';
+import { ClinicalPanel } from './clinical-panel.js';
 
 const app = document.querySelector('#app');
 const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
@@ -17,7 +18,7 @@ let session, profile, clinic, modal;
 let patients = [], appointments = [], prescriptions = [], medications = [];
 let documentsCount = 0, fiscalDocuments = [], selectedMeds = [], busy = false;
 let agendaCalendar = null, calendarSearchTerm = '', calendarPatientId = '', calendarExpanded = false;
-let availability=null, prescriptionBrowser=null, financePanel=null, medSearchSequence=0, medSearchTimer=null;
+let availability=null, prescriptionBrowser=null, financePanel=null, clinicalPanel=null, medSearchSequence=0, medSearchTimer=null;
 const PAGE_SIZE = 12;
 let pageState = {agenda:1,prescriptions:1,fiscal:1};
 let pageTotals = {agenda:0,prescriptions:0,fiscal:0};
@@ -27,7 +28,7 @@ const initials = (name='') => name.split(/\s+/).filter(Boolean).slice(0,2).map(x
 const day = (v) => v ? new Intl.DateTimeFormat('pt-BR').format(new Date(v)) : 'Não informado';
 const hour = (v) => v ? new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(v)) : '';
 const patient = (id) => patients.find(p=>p.id===id);
-const label = (s) => ({scheduled:'Agendada',confirmed:'Confirmada',completed:'Concluída',cancelled:'Cancelada',no_show:'Faltou',draft:'Rascunho',pending_signature:'Aguardando assinatura',signed:'Assinada',active:'Ativo',inactive:'Inativo',nfse:'NFS-e',receipt:'Recibo',queued:'Na fila',issued:'Emitida',failed:'Falhou'}[s] || s || '—');
+const label = (s) => ({scheduled:'Agendada',confirmed:'Confirmada',checked_in:'Presença registrada',completed:'Concluída',cancelled:'Cancelada',no_show:'Não veio / falta',draft:'Rascunho',pending_signature:'Aguardando assinatura',signed:'Assinada',active:'Ativo',inactive:'Inativo',nfse:'NFS-e',receipt:'Recibo',queued:'Na fila',issued:'Emitida',failed:'Falhou'}[s] || s || '—');
 const money = (v) => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 
 function toast(message,error=false){
@@ -89,7 +90,7 @@ async function initialize(){
 
 function shell(content){
   const title=nav.find(n=>n[0]===route)?.[1]||'Visão geral';
-  return `<div class="shell"><aside class="sidebar"><button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button><nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}</button>`).join('')}</nav><div class="side-note"><b>Compromisso com cada paciente</b><small>Uma rotina mais clara, humana e bem acompanhada.</small></div></aside><main><header class="top"><div><span>${esc(clinic?.name||'Alegrare')}</span><b>${esc(title)}</b></div><div class="account"><span><b>${esc(profile?.full_name||'Danielle')}</b><small>${esc(session?.user?.email||'')}</small></span><button class="avatar" data-action="account">${initials(profile?.full_name||'Danielle')}</button></div></header><div class="content">${content}</div></main></div>${modal?renderModal():''}<div id="toast"></div>`;
+  return `<div class="shell"><aside class="sidebar"><button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button><nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}</button>`).join('')}</nav><div class="side-note"><b>Compromisso com cada paciente</b><small>Uma rotina mais clara, humana e bem acompanhada.</small></div></aside><main><header class="top"><div><span>${esc(clinic?.name||'Alegrare')}</span><b>${esc(title)}</b></div><div class="account"><span><b>${esc(profile?.full_name||'Danielle')}</b><small>${esc(session?.user?.email||'')}</small></span><button class="avatar" data-action="account">${initials(profile?.full_name||'Danielle')}</button></div></header><div class="content">${content}<p class="privacy-hint" role="note">Dados pessoais e de saúde: acesso restrito à equipe autorizada. Compartilhe apenas pelo canal e com o destinatário confirmados.</p></div></main></div>${modal?renderModal():''}<div id="toast"></div>`;
 }
 const pageHead=(title,sub,action='')=>`<section class="page-head"><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div>${action}</section>`;
 const empty=(title,text,action='')=>`<div class="empty-state"><span>+</span><h2>${esc(title)}</h2><p>${esc(text)}</p>${action}</div>`;
@@ -112,7 +113,7 @@ function agendaPage(){
       '<div class="calendar-tools-actions"><label class="calendar-mode">Ao clicar ou arrastar<select id="agenda-mode"><option value="appointment">Agendar paciente</option>'+ (availability?.owner?'<option value="available">Marcar disponibilidade</option><option value="blocked">Bloquear período</option>':'')+'</select></label><span id="agenda-search-status" role="status">Carregando compromissos…</span><button type="button" class="secondary" id="calendar-expand" aria-pressed="'+String(calendarExpanded)+'">'+(calendarExpanded?'Reduzir agenda':'Expandir agenda')+'</button></div>'+
     '</div>'+
     '<div class="calendar-scroll"><div id="agenda-calendar" aria-label="Agenda interativa da clínica"></div></div>'+
-    '<div class="calendar-legend" aria-label="Legenda de situações"><span><i class="scheduled"></i>Agendada</span><span><i class="confirmed"></i>Confirmada</span><span><i class="completed"></i>Concluída</span><span><i class="no-show"></i>Faltou</span><span><i class="cancelled"></i>Cancelada</span><small>Pesquise e selecione um paciente; depois clique ou arraste no horário desejado para agendar. Arraste um compromisso para remarcar.</small></div>'+
+    '<div class="calendar-legend" aria-label="Legenda de situações"><span><i class="scheduled"></i>Agendada</span><span><i class="confirmed"></i>Confirmada</span><span><i class="confirmed"></i>Presença</span><span><i class="completed"></i>Concluída</span><span><i class="no-show"></i>Não veio / falta</span><span><i class="cancelled"></i>Cancelada</span><small>Pesquise e selecione um paciente; depois clique ou arraste no horário desejado para agendar. Arraste um compromisso para remarcar.</small></div>'+
   '</section>';
   const old=history.length?'<section class="card history-card"><div class="card-title"><div><h2>Histórico de compromissos</h2><p>Do mais recente para o mais antigo.</p></div></div><div class="appointment-list">'+history.map(appointmentRow).join('')+'</div>'+pagination('agenda')+'</section>':'';
   const pending=appointments.filter(a=>a.approval_status==='pending'&&a.status!=='cancelled');
@@ -193,7 +194,7 @@ function manageAppointment(appointment){
     modal=null;pageState={agenda:1,prescriptions:1,fiscal:1};
     try{await loadWorkspace();render();toast('Consulta atualizada.');}
     catch{toast('Consulta salva. Atualize a página para recarregar a agenda.',true);}
-  },{availability,profile});
+  },{availability,profile,onReturn:(patientId,start,end)=>{route='agenda';history.replaceState(null,'','#/agenda');modal={type:'appointment',patientId,startsAt:start.toISOString(),endsAt:end.toISOString(),returnFor:appointment.id};render();}});
 }
 
 function askRescheduleReason(appointment,start){
@@ -249,7 +250,7 @@ function documentsPage(){return `${pageHead('Documentos','Envie um arquivo e esc
 function fiscalRow(doc){const p=patient(doc.patient_id);return `<article class="simple-row fiscal-row"><div><b>${esc(label(doc.document_type))} · ${money(doc.amount)}</b><small>${esc(p?.full_name||'Documento sem paciente')} · ${doc.issued_at?esc(day(doc.issued_at)):'Sem data de emissão'}</small></div><span class="status ${esc(doc.status)}">${esc(label(doc.status))}</span>${doc.document_url?`<a class="secondary fiscal-link" href="${esc(doc.document_url)}" target="_blank" rel="noreferrer">Abrir</a>`:''}</article>`;}
 function fiscalPage(){return `${pageHead('Financeiro','Faturamento, conciliação manual e recebimentos vinculados aos documentos fiscais.','<button class="primary" data-action="new-fiscal">Registrar nota / recibo</button>')}<section class="card search-record-card"><div id="finance-panel"></div></section>`;}
 
-function patientModal(id){const p=patient(id),items=appointments.filter(a=>a.patient_id===id).slice(-5).reverse();return `<div class="modal-card wide"><div class="modal-head"><div><h2>${esc(p.full_name)}</h2><p>${esc(p.phone||'Telefone não informado')} · ${esc(p.email||'E-mail não informado')}</p></div><button data-action="close">×</button></div><div class="patient-summary"><div><small>Tratamento atual</small><b>${esc(p.current_treatment||'Não informado')}</b></div><div><small>Última visita</small><b>${day(p.last_visit_at)}</b></div><div><small>Status</small><b>${esc(label(p.status))}</b></div></div><h3>Compromissos recentes</h3>${items.length?`<div class="appointment-list compact">${items.map(appointmentRow).join('')}</div>`:'<p class="empty">Ainda não há compromissos para este paciente.</p>'}<div class="modal-actions"><button class="secondary" data-action="close">Fechar</button><button class="primary" data-action="new-rx-for" data-id="${p.id}">Criar prescrição</button></div></div>`;}
+function patientModal(id){const p=patient(id),items=appointments.filter(a=>a.patient_id===id).slice(-5).reverse();return `<div class="modal-card wide"><div class="modal-head"><div><h2>${esc(p.full_name)}</h2><p>${esc(p.phone||'Telefone não informado')} · ${esc(p.email||'E-mail não informado')}</p></div><button data-action="close">×</button></div><div class="patient-summary"><div><small>Tratamento atual</small><b>${esc(p.current_treatment||'Não informado')}</b></div><div><small>Última visita</small><b>${day(p.last_visit_at)}</b></div><div><small>Status</small><b>${esc(label(p.status))}</b></div></div><h3>Compromissos recentes</h3>${items.length?`<div class="appointment-list compact">${items.map(appointmentRow).join('')}</div>`:'<p class="empty">Ainda não há compromissos para este paciente.</p>'}<div id="clinical-panel" class="clinical-panel"></div><div class="modal-actions"><button class="secondary" data-action="close">Fechar</button><button class="primary" data-action="new-rx-for" data-id="${p.id}">Criar prescrição</button></div></div>`;}
 
 
 function newPatientModal(){return `<div class="modal-card"><div class="modal-head"><div><h2>Novo paciente</h2><p>Cadastre somente o necessário. Complete os demais dados depois.</p></div><button data-action="close">×</button></div><form id="patient-form" class="data-form"><label>Nome completo<input name="full_name" required></label><div class="form-grid"><label>Telefone<input name="phone" inputmode="tel"></label><label>E-mail<input name="email" type="email"></label></div><label>Tratamento atual<input name="current_treatment" placeholder="Ex.: Clareamento"></label><label>Observações<textarea name="notes" rows="3"></textarea></label><div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar paciente</button></div></form></div>`;}
@@ -259,12 +260,14 @@ function appointmentModal(){
   const selected=patients.find(p=>p.id===(modal?.patientId||''));
   return '<div class="modal-card"><div class="modal-head"><div><h2>Novo compromisso</h2><p>Busque o paciente cadastrado e confirme o horário escolhido.</p></div><button data-action="close" aria-label="Fechar">×</button></div>'+
     '<form id="appointment-form" class="data-form">'+
+      (!availability?.ready?'<p class="privacy-hint">A disponibilidade compartilhada ainda não está ativada no banco. Confira manualmente o expediente da Danielle antes de reservar este horário.</p>':'')+
       '<label class="patient-picker-label" for="appointment-patient-search">Buscar paciente cadastrado<input id="appointment-patient-search" type="search" autocomplete="off" aria-autocomplete="list" aria-controls="appointment-patient-results" placeholder="Digite o nome ou telefone" value="'+esc(selected?.full_name||'')+'" required></label>'+
       '<input type="hidden" name="patient_id" value="'+esc(selected?.id||'')+'">'+
       '<div id="appointment-patient-results" class="patient-search-results" role="listbox" aria-label="Pacientes encontrados"></div>'+
       '<div id="appointment-patient-selected" class="patient-selected" '+(selected?'':'hidden')+'><span>Paciente selecionado: <b>'+esc(selected?.full_name||'')+'</b></span><button type="button">Trocar</button></div>'+
       '<p id="appointment-patient-status" class="patient-search-status">'+(selected?'Paciente selecionado.':'Escolha um paciente da lista de resultados.')+'</p>'+
-      '<label>Procedimento ou motivo<input name="procedure_name" required placeholder="Ex.: Avaliação"></label>'+
+      '<label>Procedimento ou motivo<input name="procedure_name" required value="'+(modal?.returnFor?'Retorno':'')+'" placeholder="Ex.: Avaliação"></label>'+
+      '<input type="hidden" name="return_for" value="'+esc(modal?.returnFor||'')+'">'+
       '<div class="form-grid"><label>Início<input name="starts_at" type="datetime-local" required value="'+range.start+'"></label><label>Término<input name="ends_at" type="datetime-local" required value="'+range.end+'"></label></div>'+
       '<label>Observações<textarea name="notes" rows="3"></textarea></label>'+
       '<div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar compromisso</button></div>'+
@@ -283,11 +286,12 @@ function renderModal(){if(modal?.type==='patient')return `<div class="modal-back
 
 function render(){
   if(agendaCalendar){agendaCalendar.destroy();agendaCalendar=null;}
-  prescriptionBrowser?.destroy();prescriptionBrowser=null;financePanel?.destroy();financePanel=null;medSearchSequence++;clearTimeout(medSearchTimer);
+  prescriptionBrowser?.destroy();prescriptionBrowser=null;financePanel?.destroy();financePanel=null;clinicalPanel?.destroy();clinicalPanel=null;medSearchSequence++;clearTimeout(medSearchTimer);
   document.body.classList.remove('calendar-overlay-open');
   const pages={home:homePage,agenda:agendaPage,patients:patientsPage,prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};
   app.innerHTML=shell((pages[route]||homePage)());
   bind();
+  if(modal?.type==='patient'){clinicalPanel=new ClinicalPanel({clinicId:profile.clinic_id,patient:patient(modal.id),profile});clinicalPanel.mount(document.querySelector('#clinical-panel'));}
   if(route==='agenda'){
     agendaCalendar=mountAgendaCalendar({
       element:document.querySelector('#agenda-calendar'),
@@ -340,7 +344,7 @@ async function suggest(term){
  box.querySelectorAll('[data-med-id]').forEach(b=>b.onclick=()=>{const m=found.find(x=>x.id===b.dataset.medId);if(m&&!selectedMeds.some(x=>x.id===m.id))selectedMeds.push({...m,instructions:''});document.querySelector('#selected-meds').innerHTML=selectedMedications();input.value='';box.classList.remove('open');feedback.textContent='Medicamento adicionado. Confira as orientações individuais.';bind();input.focus();});
 }
 
-async function savePatient(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,full_name:String(fd.get('full_name')).trim(),phone:String(fd.get('phone')).trim()||null,email:String(fd.get('email')).trim()||null,current_treatment:String(fd.get('current_treatment')).trim()||null,notes:String(fd.get('notes')).trim()||null};const {data,error}=await supabase.from('patients').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}patients.push(data);patients.sort((a,b)=>a.full_name.localeCompare(b.full_name,'pt-BR'));modal=null;render();toast('Paciente cadastrado.');}
+async function savePatient(e){e.preventDefault();if(busy)return;busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,full_name:String(fd.get('full_name')).trim(),phone:String(fd.get('phone')).trim()||null,email:String(fd.get('email')).trim()||null,current_treatment:String(fd.get('current_treatment')).trim()||null,notes:String(fd.get('notes')).trim()||null};const norm=s=>String(s||'').trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/\p{Diacritic}/gu,'');const digits=s=>String(s||'').replace(/\D/g,'');const duplicate=patients.find(p=>norm(p.full_name)===norm(payload.full_name)&&((payload.phone&&digits(p.phone)===digits(payload.phone))||(payload.email&&norm(p.email)===norm(payload.email))));if(duplicate){busy=false;modal={type:'patient',id:duplicate.id};render();toast('Cadastro semelhante já existe. Confira o paciente antes de criar outro.',true);return;}const {data,error}=await supabase.from('patients').insert(payload).select('*').single();busy=false;if(error){toast(error.message,true);return;}patients.push(data);patients.sort((a,b)=>a.full_name.localeCompare(b.full_name,'pt-BR'));modal=null;render();toast('Paciente cadastrado.');}
 
 async function saveAppointment(e){
   e.preventDefault();if(busy)return;
@@ -350,7 +354,8 @@ async function saveAppointment(e){
   if(!Number.isFinite(+start)||!Number.isFinite(+end)||end<=start){toast('O término precisa ser depois do início.',true);return;}
   busy=true;
   try{await validateAppointment(profile.clinic_id,start,end);await availability?.check(start,end);}catch(error){busy=false;toast(friendlyAgendaError(error),true);return;}
-  const payload={clinic_id:profile.clinic_id,patient_id:patientId,professional_id:availability?.settings?.owner_id||profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:String(fd.get('notes')).trim()||null,created_by:profile.id};
+  const returnFor=String(fd.get('return_for')||'');
+  const payload={clinic_id:profile.clinic_id,patient_id:patientId,professional_id:availability?.settings?.owner_id||profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:[String(fd.get('notes')).trim(),returnFor?`Retorno referente à consulta ${returnFor}`:''].filter(Boolean).join('\n')||null,created_by:profile.id};
   const {data,error}=await supabase.from('appointments').insert(payload).select('*').single();
   busy=false;
   if(error){toast(error.message,true);return;}

@@ -3,7 +3,7 @@ import { validateAppointment, friendlyAgendaError } from './agenda-rules.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localDate = value => { const d=new Date(value); return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16); };
-const statuses = {scheduled:'Agendada',confirmed:'Confirmada',completed:'Compareceu / concluída',no_show:'Faltou',cancelled:'Cancelada'};
+const statuses = {scheduled:'Agendada / aguardando confirmação',confirmed:'Confirmada',checked_in:'Presença registrada',completed:'Compareceu / concluída',no_show:'Não veio / falta',cancelled:'Cancelada'};
 
 export function openAppointmentCare(appointment, patient, clinicId, onSaved, context={}){
   document.querySelector('#appointment-care')?.remove();
@@ -18,7 +18,8 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <div class="form-grid"><label>Início<input name="start" type="datetime-local" required value="${localDate(appointment.starts_at)}"></label><label>Término<input name="end" type="datetime-local" required value="${localDate(appointment.ends_at)}"></label></div>
     <p class="consultation-help">Para remarcar, altere o horário e salve. Confirmação de um horário anterior volta para “Agendada”.</p>
     <label>Observações<textarea name="notes" rows="3">${escape(appointment.notes||'')}</textarea></label>
-    <label>Motivo da remarcação ou cancelamento<input name="reason" placeholder="Preencha quando alterar o horário ou cancelar"></label>
+    <label>Justificativa da falta, remarcação ou cancelamento<input name="reason" placeholder="Obrigatória ao registrar falta, remarcar ou cancelar"></label>
+    <section class="consultation-reminders"><h3>Retorno</h3><p>Defina uma data de referência. O aviso fica no painel; o horário do retorno só é reservado depois de confirmar a disponibilidade na agenda.</p><div class="form-grid"><label>Data desejada<input name="return_date" type="date"></label><label>Hora sugerida<input name="return_time" type="time" value="09:00"></label></div><button type="button" class="secondary" data-return>Marcar retorno nesta data</button></section>
     <section class="consultation-reminders"><h3>Lembretes da consulta</h3><p>Envio automático e histórico de entrega ainda não estão conectados. As opções abaixo usam o horário salvo.</p><div class="consultation-actions"><button type="button" class="secondary" data-calendar>Adicionar ao calendário</button><button type="button" class="secondary" data-copy>Copiar lembrete do paciente</button></div></section>
     <p role="status" class="consultation-feedback"></p>
     <div class="modal-actions"><button class="secondary" type="button" data-close>Fechar</button><button class="primary" type="submit">Salvar consulta</button></div>
@@ -41,14 +42,21 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     const link=document.createElement('a');link.href=url;link.download='consulta-alegrare.ics';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     feedback.textContent='Arquivo baixado. Importe no calendário e confira o alerta de 1 hora. Se remarcar, atualize também seu calendário.';
   };
+  dialog.querySelector('[data-return]').onclick=()=>{
+    const date=form.elements.return_date.value,time=form.elements.return_time.value||'09:00';
+    if(!date){feedback.textContent='Escolha a data do retorno.';return;}
+    const start=new Date(`${date}T${time}`);
+    if(start<=new Date()){feedback.textContent='Escolha uma data futura para o retorno.';return;}
+    close();context.onReturn?.(appointment.patient_id,start,new Date(+start+60*60*1000));
+  };
   form.onsubmit=async event=>{
     event.preventDefault();
     const start=new Date(form.elements.start.value),end=new Date(form.elements.end.value);
     if(!Number.isFinite(+start)||!Number.isFinite(+end)||end<=start){feedback.textContent='Confira as datas: o término deve ser depois do início.';return;}
     const moved=+start!==+new Date(appointment.starts_at)||+end!==+new Date(appointment.ends_at);
     const reason=form.elements.reason.value.trim(),status=form.elements.status.value;
-    if((moved||(status==='cancelled'&&appointment.status!=='cancelled'))&&!reason){feedback.textContent='Informe o motivo da remarcação ou do cancelamento.';form.elements.reason.focus();return;}
-    if(['completed','no_show'].includes(status)&&start>new Date()){feedback.textContent='Comparecimento ou falta só podem ser registrados após o início da consulta.';return;}
+    if((moved||(['cancelled','no_show'].includes(status)&&appointment.status!==status))&&!reason){feedback.textContent='Informe a justificativa da falta, remarcação ou cancelamento.';form.elements.reason.focus();return;}
+    if(['checked_in','completed','no_show'].includes(status)&&start>new Date()){feedback.textContent='Presença ou falta só podem ser registradas após o início da consulta.';return;}
     let notes=form.elements.notes.value.trim();
     if(reason)notes+=`${notes?'\n\n':''}[${new Date().toISOString()}] ${moved?'Remarcação de '+appointment.starts_at+' para '+start.toISOString():'Alteração para '+statuses[status]}: ${reason}`;
     const payload={starts_at:start.toISOString(),ends_at:end.toISOString(),status:moved&&status==='confirmed'?'scheduled':status,procedure_name:form.elements.procedure.value.trim(),notes:notes||null};
