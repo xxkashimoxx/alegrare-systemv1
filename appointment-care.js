@@ -1,6 +1,6 @@
 import { supabase } from './supabase-client.js';
 import { validateAppointment, friendlyAgendaError } from './agenda-rules.js';
-import { appointmentConfirmationUrl } from './appointment-whatsapp.js';
+import { appointmentConfirmationMessage, appointmentConfirmationUrl } from './appointment-whatsapp.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localDate = value => { const d=new Date(value); return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16); };
@@ -19,7 +19,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <label>Procedimento<input name="procedure" required value="${escape(appointment.procedure_name||'Consulta')}"></label>
     <label>Situação<select name="status">${Object.entries(statuses).map(([value,label])=>`<option value="${value}" ${appointment.status===value?'selected':''}>${label}</option>`).join('')}</select></label>
     <div class="form-grid"><label>Início<input name="start" type="datetime-local" required value="${localDate(appointment.starts_at)}"></label><label>Término<input name="end" type="datetime-local" required value="${localDate(appointment.ends_at)}"></label></div>
-    <section class="consultation-reminders consultation-message"><h3>Confirmação para o paciente</h3><p>${canConfirm&&whatsappUrl?'Abra a conversa com a mensagem pronta. Confira os dados e toque em enviar no WhatsApp.':!canConfirm?'Disponível para consultas agendadas após a confirmação da responsável.':'Cadastre um celular com DDD no paciente para preparar a mensagem.'}</p>${canConfirm&&whatsappUrl?`<a class="primary consultation-whatsapp" data-whatsapp href="${escape(whatsappUrl)}" target="_blank" rel="noopener noreferrer">Enviar confirmação pelo WhatsApp</a><p data-whatsapp-status role="status"></p>`:''}</section>
+    <section class="consultation-reminders consultation-message"><h3>Confirmação para o paciente</h3><p>${canConfirm&&whatsappUrl?'Abra a conversa com a mensagem pronta. Confira os dados e toque em enviar no WhatsApp.':!canConfirm?'Disponível para consultas agendadas após a confirmação da responsável.':'Cadastre um celular com DDD no paciente para preparar a mensagem.'}</p>${canConfirm&&whatsappUrl?`<details class="consultation-message-preview"><summary>Ver mensagem pronta</summary><p>${escape(appointmentConfirmationMessage(appointment,patient))}</p></details><a class="primary consultation-whatsapp" data-whatsapp href="${escape(whatsappUrl)}" target="_blank" rel="noopener noreferrer">Enviar confirmação pelo WhatsApp</a><p data-whatsapp-status role="status"></p>`:''}</section>
     <p class="consultation-help">Para remarcar, altere o horário e salve. Confirmação de um horário anterior volta para “Agendada”.</p>
     <label>Observações<textarea name="notes" rows="3">${escape(appointment.notes||'')}</textarea></label>
     <label>Justificativa da falta, remarcação ou cancelamento<input name="reason" placeholder="Obrigatória ao registrar falta, remarcar ou cancelar"></label>
