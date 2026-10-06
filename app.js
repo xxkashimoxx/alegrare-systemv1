@@ -12,7 +12,8 @@ import { ClinicalPanel } from './clinical-panel.js';
 
 const app = document.querySelector('#app');
 const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
-const nav = [['home','Visão geral'],['agenda','Agenda'],['patients','Pacientes'],['prescriptions','Receitas'],['documents','Assinaturas'],['fiscal','Financeiro']];
+// Prescrições ficam vinculadas ao prontuário do paciente; não ocupam mais um menu separado.
+const nav = [['home','Visão geral'],['agenda','Agenda'],['patients','Pacientes'],['documents','Assinaturas'],['fiscal','Financeiro']];
 let route = location.hash.replace('#/','').split('/')[0] || 'home';
 let session, profile, clinic, modal;
 let patients = [], appointments = [], prescriptions = [], medications = [];
@@ -30,6 +31,21 @@ const hour = (v) => v ? new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'
 const patient = (id) => patients.find(p=>p.id===id);
 const label = (s) => ({scheduled:'Agendada',confirmed:'Confirmada',checked_in:'Presença registrada',completed:'Concluída',cancelled:'Cancelada',no_show:'Não veio / falta',draft:'Rascunho',pending_signature:'Aguardando assinatura',signed:'Assinada',active:'Ativo',inactive:'Inativo',nfse:'NFS-e',receipt:'Recibo',queued:'Na fila',issued:'Emitida',failed:'Falhou'}[s] || s || '—');
 const money = (v) => Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const consentGiven = () => /(?:^|;\s*)alegrare_consent=(?:accepted|declined)(?:;|$)/.test(document.cookie);
+const birthdayToday = (birthDate, reference = new Date()) => {
+  if(!birthDate) return false;
+  const value = String(birthDate).slice(0,10).split('-').map(Number);
+  return value.length===3 && value[1]===reference.getMonth()+1 && value[2]===reference.getDate();
+};
+const birthdaysToday = () => patients.filter(p => birthdayToday(p.birth_date));
+const birthdayWhatsapp = (p) => {
+  const digits=String(p.phone||'').replace(/\D/g,'');
+  if(![10,11].includes(digits.length)) return '';
+  const target=`55${digits}`;
+  const name=patientDisplayName(p);
+  const message=`Olá, ${name}! A equipe Alegrare deseja um feliz aniversário, com muita saúde e alegria. Será um prazer cuidar de você. 💙`;
+  return `https://wa.me/${target}?text=${encodeURIComponent(message)}`;
+};
 
 function toast(message,error=false){
   let el=document.querySelector('#toast');
@@ -90,7 +106,8 @@ async function initialize(){
 
 function shell(content){
   const title=nav.find(n=>n[0]===route)?.[1]||'Visão geral';
-  return `<div class="shell"><aside class="sidebar"><button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button><nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}</button>`).join('')}</nav><div class="side-note"><b>Compromisso com cada paciente</b><small>Uma rotina mais clara, humana e bem acompanhada.</small></div></aside><main><header class="top"><div><span>${esc(clinic?.name||'Alegrare')}</span><b>${esc(title)}</b></div><div class="global-patient-search"><label for="global-patient-search">Buscar paciente</label><input id="global-patient-search" type="search" autocomplete="off" aria-controls="global-patient-results" aria-autocomplete="list" placeholder="Nome, nome social ou telefone"><div id="global-patient-results" class="patient-search-results" role="listbox" aria-label="Pacientes encontrados"></div></div><div class="account"><span><b>${esc(profile?.full_name||'Danielle')}</b><small>${esc(session?.user?.email||'')}</small></span><button class="avatar" data-action="account">${initials(profile?.full_name||'Danielle')}</button></div></header><div class="content">${content}<p class="privacy-hint" role="note">Dados pessoais e de saúde: acesso restrito à equipe autorizada. Compartilhe apenas pelo canal e com o destinatário confirmados.</p></div></main></div>${modal?renderModal():''}<div id="toast"></div>`;
+  const cookieBanner=consentGiven()?'':`<aside class="privacy-consent" role="dialog" aria-label="Privacidade e cookies"><b>Privacidade e proteção de dados</b><p>Este painel trata dados pessoais e de saúde somente para a rotina autorizada da clínica. Não usamos cookies de publicidade nesta aplicação.</p><div><button class="secondary" data-consent="declined">Não aceitar cookies</button><button class="primary" data-consent="accepted">Aceitar e continuar</button></div></aside>`;
+  return `<div class="shell"><aside class="sidebar"><button class="brand" data-route="home"><span>A</span><div><strong>Alegrare</strong><small>ODONTOLOGIA ESPECIAL</small></div></button><nav>${nav.map(([r,l])=>`<button class="nav ${route===r?'active':''}" data-route="${r}">${l}</button>`).join('')}</nav><div class="side-note"><b>Compromisso com cada paciente</b><small>Uma rotina mais clara, humana e bem acompanhada.</small></div></aside><main><header class="top"><div><span>${esc(clinic?.name||'Alegrare')}</span><b>${esc(title)}</b></div><div class="global-patient-search"><label for="global-patient-search">Buscar paciente</label><input id="global-patient-search" type="search" autocomplete="off" aria-controls="global-patient-results" aria-autocomplete="list" placeholder="Nome, nome social ou telefone"><div id="global-patient-results" class="patient-search-results" role="listbox" aria-label="Pacientes encontrados"></div></div><div class="account"><span><b>${esc(profile?.full_name||'Danielle')}</b><small>${esc(session?.user?.email||'')}</small></span><button class="avatar" data-action="account">${initials(profile?.full_name||'Danielle')}</button></div></header><div class="content">${content}<p class="privacy-hint" role="note">Dados pessoais e de saúde: acesso restrito à equipe autorizada. Compartilhe apenas pelo canal e com o destinatário confirmados.</p></div></main></div>${modal?renderModal():''}${cookieBanner}<div id="toast"></div>`;
 }
 const pageHead=(title,sub,action='')=>`<section class="page-head"><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div>${action}</section>`;
 const empty=(title,text,action='')=>`<div class="empty-state"><span>+</span><h2>${esc(title)}</h2><p>${esc(text)}</p>${action}</div>`;
@@ -102,7 +119,8 @@ async function loadPage(kind,page){const pages=Math.max(1,Math.ceil((pageTotals[
 
 function appointmentRow(a){const p=patient(a.patient_id);return `<article class="appointment-row"><time><b>${hour(a.starts_at)}</b><small>${day(a.starts_at)}</small></time><span class="avatar soft">${initials(patientDisplayName(p))}</span><div><b>${esc(patientDisplayName(p))}</b><small>${esc(a.procedure_name||'Consulta')} · ${esc(label(a.status))}</small></div><div class="consultation-actions"><span class="status ${esc(a.status)}">${a.approval_status==='pending'?'Aguardando confirmação':esc(label(a.status))}</span><button class="secondary" data-consultation="${esc(a.id)}">Gerenciar consulta</button></div></article>`;}
 
-function homePage(){const todayItems=today().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));return `${pageHead('Visão geral','Agenda de hoje e acesso rápido ao que importa.','<button class="primary" data-action="new-appointment">Novo agendamento</button>')}<section class="card home-today"><div class="card-title"><div><h2>Hoje · ${todayItems.length} compromisso${todayItems.length===1?'':'s'}</h2></div><button class="link" data-route="agenda">Abrir agenda</button></div>${todayItems.length?`<div class="appointment-list">${todayItems.slice(0,4).map(appointmentRow).join('')}</div>${todayItems.length>4?`<p class="search-feedback">Mais ${todayItems.length-4} na agenda.</p>`:''}`:'<p class="empty">Nenhum compromisso hoje.</p>'}</section>`;}
+function birthdayCard(){const people=birthdaysToday();if(!people.length)return '';return `<section class="card birthday-card"><div class="card-title"><div><span class="birthday-badge">ANIVERSARIANTE DE HOJE</span><h2>${people.length} paciente${people.length===1?'':'s'} merece${people.length===1?'':'m'} atenção</h2><p>Mensagem personalizada pronta para abrir no WhatsApp.</p></div><span class="birthday-tag">🎂 Hoje</span></div><div class="birthday-list">${people.map(p=>`<article class="birthday-row"><span class="avatar birthday-avatar">${initials(patientDisplayName(p))}</span><div><b>${esc(patientDisplayName(p))}</b><small>${esc(p.phone||'Telefone não informado')}</small></div>${birthdayWhatsapp(p)?`<a class="primary birthday-action" target="_blank" rel="noopener noreferrer" href="${esc(birthdayWhatsapp(p))}">Enviar mensagem</a>`:'<span class="status">Sem WhatsApp cadastrado</span>'}</article>`).join('')}</div></section>`;}
+function homePage(){const todayItems=today().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));return `${pageHead('Visão geral','Agenda de hoje e acesso rápido ao que importa.','<button class="primary" data-action="new-appointment">Novo agendamento</button>')}${birthdayCard()}<section class="card home-today"><div class="card-title"><div><h2>Hoje · ${todayItems.length} compromisso${todayItems.length===1?'':'s'}</h2></div><button class="link" data-route="agenda">Abrir agenda</button></div>${todayItems.length?`<div class="appointment-list">${todayItems.slice(0,4).map(appointmentRow).join('')}</div>${todayItems.length>4?`<p class="search-feedback">Mais ${todayItems.length-4} na agenda.</p>`:''}`:'<p class="empty">Nenhum compromisso hoje.</p>'}</section>`;}
 
 function agendaPage(){
   const now=new Date(),history=appointments.filter(a=>new Date(a.ends_at)<now).sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at));
@@ -330,6 +348,7 @@ function bind(){
   document.querySelectorAll('[data-route]').forEach(el=>el.onclick=()=>location.hash='#/'+el.dataset.route);
   document.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>action(el.dataset.action,el.dataset.id));
   bindGlobalPatientSearch();
+  document.querySelectorAll('[data-consent]').forEach(button=>button.onclick=()=>{document.cookie=`alegrare_consent=${button.dataset.consent}; max-age=31536000; path=/; SameSite=Lax`;document.querySelector('.privacy-consent')?.remove();});
   const listSearch=document.querySelector('[data-patient-list-search]');if(listSearch)listSearch.oninput=()=>{let visible=0;document.querySelectorAll('.patient-list .patient-row').forEach(row=>{row.hidden=!patientMatches(listSearch.value,patient(row.dataset.id));if(!row.hidden)visible++;});document.querySelector('[data-patient-list-count]').textContent=`${visible} paciente(s) encontrado(s).`;};
   document.querySelector('#patient-form')?.addEventListener('submit',savePatient);
   document.querySelector('#social-name-form')?.addEventListener('submit',saveSocialName);
