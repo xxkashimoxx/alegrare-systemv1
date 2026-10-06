@@ -92,7 +92,10 @@ create or replace function agenda_private.guard_appointment() returns trigger
 language plpgsql security definer set search_path='' as $$
 declare settings public.agenda_settings; changed boolean;
 begin
+ -- Imports authorized with the service role retain their original source fields.
+ if current_setting('request.jwt.claim.role',true)='service_role' then return new; end if;
  if auth.uid() is null or not exists(select 1 from public.profiles where id=auth.uid() and clinic_id=new.clinic_id) then raise exception 'Acesso à agenda não autorizado.';end if;
+ if not exists(select 1 from public.patients p where p.id=new.patient_id and p.clinic_id=new.clinic_id) then raise exception 'Paciente não pertence a esta clínica.';end if;
  perform pg_advisory_xact_lock(hashtextextended(new.clinic_id::text,0));
  select * into settings from public.agenda_settings where clinic_id=new.clinic_id;
  changed=tg_op='INSERT';
