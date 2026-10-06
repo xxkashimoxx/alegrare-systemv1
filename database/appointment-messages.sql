@@ -84,8 +84,8 @@ revoke all on function public.claim_patient_messages(uuid,uuid,integer) from pub
 grant execute on function public.claim_patient_messages(uuid,uuid,integer) to service_role;
 
 insert into public.patient_message_settings(clinic_id,sender_phone,sender_email,enabled)
-values('4a27d66a-6ab4-4c25-95af-6aedfae6c45f','+5521975490550','daniellecoelho@alegrare.com',false)
+values('4a27d66a-6ab4-4c25-95af-6aedfae6c45f','+5521994133062','daniellecoelho@alegrare.com',false)
 on conflict (clinic_id) do nothing;
-update public.agenda_settings set notification_phone='+5521975490550'
+update public.agenda_settings set notification_phone='+5521994133062'
 where clinic_id='4a27d66a-6ab4-4c25-95af-6aedfae6c45f' and notification_phone is null;
 commit;
