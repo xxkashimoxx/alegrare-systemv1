@@ -21,7 +21,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <label>Justificativa da falta, remarcação ou cancelamento<input name="reason" placeholder="Obrigatória ao registrar falta, remarcar ou cancelar"></label>
     <section class="clinical-occurrence"><h3>Atendimento clínico não realizado</h3><p>Registre o que ocorreu e a conduta adotada. Pressão arterial é opcional; não há avaliação automática do resultado.</p><div class="form-grid"><label>Pressão sistólica (mmHg)<input name="bp_systolic" type="number" min="1" max="350" inputmode="numeric"></label><label>Pressão diastólica (mmHg)<input name="bp_diastolic" type="number" min="1" max="250" inputmode="numeric"></label></div><label>Ocorrência / motivo clínico<textarea name="occurrence" rows="3" placeholder="Ex.: aferição e decisão profissional de adiar o atendimento"></textarea></label></section>
     <section class="consultation-reminders"><h3>Retorno</h3><p>Defina uma data de referência. O aviso fica no painel; o horário do retorno só é reservado depois de confirmar a disponibilidade na agenda.</p><div class="form-grid"><label>Data desejada<input name="return_date" type="date"></label><label>Hora sugerida<input name="return_time" type="time" value="09:00"></label></div><button type="button" class="secondary" data-return>Marcar retorno nesta data</button></section>
-    <section class="consultation-reminders"><h3>Lembretes da consulta</h3><p>Envio automático e histórico de entrega ainda não estão conectados. As opções abaixo usam o horário salvo.</p><div class="consultation-actions"><button type="button" class="secondary" data-calendar>Adicionar ao calendário</button><button type="button" class="secondary" data-copy>Copiar lembrete do paciente</button></div></section>
+    <section class="consultation-reminders"><h3>Lembretes da consulta</h3><p>O evento pode ser baixado, aberto no Google Calendar ou usado para preparar o lembrete do paciente.</p><div class="consultation-actions"><button type="button" class="secondary" data-calendar>Baixar .ics</button><button type="button" class="secondary" data-google-calendar>Google Calendar</button><button type="button" class="secondary" data-copy>Copiar lembrete do paciente</button></div></section>
     <p role="status" class="consultation-feedback"></p>
     <div class="modal-actions">${['scheduled','confirmed','cancelled'].includes(appointment.status)?'<button class="danger appointment-delete" type="button" data-delete>Excluir agendamento</button>':''}<button class="secondary" type="button" data-close>Fechar</button><button class="primary" type="submit">Salvar consulta</button></div>
   </form>`;
@@ -57,6 +57,14 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     const url=URL.createObjectURL(new Blob([content],{type:'text/calendar;charset=utf-8'}));
     const link=document.createElement('a');link.href=url;link.download='consulta-alegrare.ics';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     feedback.textContent='Arquivo baixado. Importe no calendário e confira o alerta de 1 hora. Se remarcar, atualize também seu calendário.';
+  };
+  dialog.querySelector('[data-google-calendar]').onclick=()=>{
+    const stamp=value=>new Date(value).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
+    const title=`Consulta Alegrare · ${patient?.full_name||'Paciente'}`;
+    const details=`${appointment.procedure_name||'Consulta'}\nPaciente: ${patient?.full_name||'Paciente'}`;
+    const url=`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${stamp(appointment.starts_at)}/${stamp(appointment.ends_at)}&details=${encodeURIComponent(details)}&location=${encodeURIComponent('Alegrare')}`;
+    window.open(url,'_blank','noopener,noreferrer');
+    feedback.textContent='Google Calendar aberto para confirmar o registro do evento. A sincronização automática ainda depende de OAuth da conta da clínica.';
   };
   dialog.querySelector('[data-return]').onclick=()=>{
     const date=form.elements.return_date.value,time=form.elements.return_time.value||'09:00';
