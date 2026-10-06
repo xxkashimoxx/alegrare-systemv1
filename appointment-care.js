@@ -23,7 +23,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <section class="consultation-reminders"><h3>Retorno</h3><p>Defina uma data de referência. O aviso fica no painel; o horário do retorno só é reservado depois de confirmar a disponibilidade na agenda.</p><div class="form-grid"><label>Data desejada<input name="return_date" type="date"></label><label>Hora sugerida<input name="return_time" type="time" value="09:00"></label></div><button type="button" class="secondary" data-return>Marcar retorno nesta data</button></section>
     <section class="consultation-reminders"><h3>Lembretes da consulta</h3><p>Envio automático e histórico de entrega ainda não estão conectados. As opções abaixo usam o horário salvo.</p><div class="consultation-actions"><button type="button" class="secondary" data-calendar>Adicionar ao calendário</button><button type="button" class="secondary" data-copy>Copiar lembrete do paciente</button></div></section>
     <p role="status" class="consultation-feedback"></p>
-    <div class="modal-actions"><button class="secondary" type="button" data-close>Fechar</button><button class="primary" type="submit">Salvar consulta</button></div>
+    <div class="modal-actions">${['scheduled','confirmed','cancelled'].includes(appointment.status)?'<button class="danger appointment-delete" type="button" data-delete>Excluir agendamento</button>':''}<button class="secondary" type="button" data-close>Fechar</button><button class="primary" type="submit">Salvar consulta</button></div>
   </form>`;
   document.body.append(dialog);
   dialog.showModal();
@@ -31,6 +31,21 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
   const close=()=>{dialog.close();dialog.remove();};
   dialog.querySelectorAll('[data-close]').forEach(button=>button.onclick=close);
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  dialog.querySelector('[data-delete]')?.addEventListener('click',async()=>{
+    const date=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Sao_Paulo'}).format(new Date(appointment.starts_at));
+    if(!window.confirm(`Excluir definitivamente o agendamento de ${patient?.full_name||'este paciente'} em ${date}? O horário será liberado. Essa ação não pode ser desfeita.`))return;
+    const buttons=dialog.querySelectorAll('button');buttons.forEach(b=>b.disabled=true);feedback.textContent='Excluindo agendamento…';
+    try{
+      let query=supabase.from('appointments').delete().eq('id',appointment.id).eq('clinic_id',clinicId);
+      if(appointment.updated_at)query=query.eq('updated_at',appointment.updated_at);
+      else query=query.eq('starts_at',appointment.starts_at).eq('ends_at',appointment.ends_at).eq('status',appointment.status);
+      const {data,error}=await query.select('id').maybeSingle();
+      if(error)throw error;
+      if(!data)throw new Error('O agendamento foi alterado ou já excluído. Atualize a agenda antes de tentar novamente.');
+      close();await onSaved(null,'deleted');
+    }catch(error){feedback.textContent=error.message||'Não foi possível excluir o agendamento.';}
+    finally{buttons.forEach(b=>b.disabled=false);}
+  });
   dialog.querySelector('[data-copy]').onclick=async()=>{
     const date=new Intl.DateTimeFormat('pt-BR',{dateStyle:'full',timeStyle:'short',timeZone:'America/Sao_Paulo'}).format(new Date(appointment.starts_at));
     try {await navigator.clipboard.writeText(`Olá! Aqui é da Alegrare. Sua consulta está agendada para ${date} (horário de Brasília). Pode confirmar sua presença?`);feedback.textContent='Lembrete copiado. Nenhuma mensagem foi enviada pelo sistema.';}

@@ -190,10 +190,10 @@ async function fetchCalendarAppointments(start,end){
 
 function manageAppointment(appointment){
   if(!appointment||!profile)return;
-  openAppointmentCare(appointment,patient(appointment.patient_id),profile.clinic_id,async()=>{
+  openAppointmentCare(appointment,patient(appointment.patient_id),profile.clinic_id,async(_updated,action)=>{
     modal=null;pageState={agenda:1,prescriptions:1,fiscal:1};
-    try{await loadWorkspace();render();toast('Consulta atualizada.');}
-    catch{toast('Consulta salva. Atualize a página para recarregar a agenda.',true);}
+    try{await loadWorkspace();render();toast(action==='deleted'?'Agendamento excluído e horário liberado.':'Consulta atualizada.');}
+    catch{toast(action==='deleted'?'Agendamento excluído. Atualize a página para recarregar a agenda.':'Consulta salva. Atualize a página para recarregar a agenda.',true);}
   },{availability,profile,onReturn:(patientId,start,end)=>{route='agenda';history.replaceState(null,'','#/agenda');modal={type:'appointment',patientId,startsAt:start.toISOString(),endsAt:end.toISOString(),returnFor:appointment.id};render();}});
 }
 
