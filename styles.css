@@ -80,6 +80,18 @@ body.calendar-overlay-open::before{content:"";position:fixed;inset:0;background:
 .patient-selected button{border:0;background:transparent;color:var(--blue);font-size:11px;font-weight:700}
 .patient-search-status{margin:-8px 0 0;color:var(--muted);font-size:10px}
 [hidden]{display:none!important}
+.top .global-patient-search{position:relative;display:block;flex:0 1 390px;min-width:180px;margin:0 16px}
+.global-patient-search label{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+.global-patient-search input{width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);outline:none}
+.global-patient-search input:focus{border-color:var(--blue)}
+.global-patient-search .patient-search-results{position:absolute;top:100%;left:0;right:0;margin-top:4px;z-index:20}
+.patient-list-search{display:grid;gap:6px;margin:16px 20px 2px;font-size:12px;font-weight:700;color:var(--muted)}
+.patient-list-search input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px}
+.patient-list>[data-patient-list-count]{margin:6px 20px 12px}
+.social-name-form{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.social-name-form label{flex:1 1 240px;margin:0}
+.social-name-form [role=status]{flex-basis:100%;font-size:12px;color:var(--muted)}
+@media(max-width:700px){.top{height:auto;min-height:68px;flex-wrap:wrap;gap:8px;padding-top:9px;padding-bottom:9px}.top .global-patient-search{order:3;flex:1 1 100%;margin:0}.top .account{margin-left:auto}}
 @media(max-width:700px){
   .calendar-tools,.calendar-tools-actions{width:100%;align-items:stretch}
   .calendar-search-wrap,.calendar-search{width:100%;min-width:0}
