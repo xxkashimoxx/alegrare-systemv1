@@ -1,5 +1,6 @@
 import { supabase } from './supabase-client.js';
 import { validateAppointment, friendlyAgendaError } from './agenda-rules.js';
+import { appointmentConfirmationUrl } from './appointment-whatsapp.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localDate = value => { const d=new Date(value); return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16); };
@@ -7,6 +8,8 @@ const statuses = {scheduled:'Agendada / aguardando confirmação',confirmed:'Con
 
 export function openAppointmentCare(appointment, patient, clinicId, onSaved, context={}){
   document.querySelector('#appointment-care')?.remove();
+  const whatsappUrl=appointmentConfirmationUrl(appointment,patient);
+  const canConfirm=['scheduled','confirmed'].includes(appointment.status)&&appointment.approval_status!=='pending';
   const dialog=document.createElement('dialog');
   dialog.id='appointment-care';
   dialog.className='consultation-dialog';
@@ -16,6 +19,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <label>Procedimento<input name="procedure" required value="${escape(appointment.procedure_name||'Consulta')}"></label>
     <label>Situação<select name="status">${Object.entries(statuses).map(([value,label])=>`<option value="${value}" ${appointment.status===value?'selected':''}>${label}</option>`).join('')}</select></label>
     <div class="form-grid"><label>Início<input name="start" type="datetime-local" required value="${localDate(appointment.starts_at)}"></label><label>Término<input name="end" type="datetime-local" required value="${localDate(appointment.ends_at)}"></label></div>
+    <section class="consultation-reminders consultation-message"><h3>Confirmação para o paciente</h3><p>${canConfirm&&whatsappUrl?'Abra a conversa com a mensagem pronta. Confira os dados e toque em enviar no WhatsApp.':!canConfirm?'Disponível para consultas agendadas após a confirmação da responsável.':'Cadastre um celular com DDD no paciente para preparar a mensagem.'}</p>${canConfirm&&whatsappUrl?`<a class="primary consultation-whatsapp" data-whatsapp href="${escape(whatsappUrl)}" target="_blank" rel="noopener noreferrer">Enviar confirmação pelo WhatsApp</a><p data-whatsapp-status role="status"></p>`:''}</section>
     <p class="consultation-help">Para remarcar, altere o horário e salve. Confirmação de um horário anterior volta para “Agendada”.</p>
     <label>Observações<textarea name="notes" rows="3">${escape(appointment.notes||'')}</textarea></label>
     <label>Justificativa da falta, remarcação ou cancelamento<input name="reason" placeholder="Obrigatória ao registrar falta, remarcar ou cancelar"></label>
@@ -28,10 +32,17 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
   </form>`;
   document.body.append(dialog);
   dialog.showModal();
-  const form=dialog.querySelector('form'), feedback=dialog.querySelector('[role="status"]');
+  const form=dialog.querySelector('form'), feedback=dialog.querySelector('.consultation-feedback');
   const close=()=>{dialog.close();dialog.remove();};
   dialog.querySelectorAll('[data-close]').forEach(button=>button.onclick=close);
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  dialog.querySelector('[data-whatsapp]')?.addEventListener('click',event=>{
+    const status=dialog.querySelector('[data-whatsapp-status]');
+    if(form.elements.start.value!==localDate(appointment.starts_at)||form.elements.end.value!==localDate(appointment.ends_at)||form.elements.procedure.value.trim()!==(appointment.procedure_name||'Consulta')||form.elements.status.value!==appointment.status){
+      event.preventDefault();status.textContent='Salve as alterações da consulta antes de preparar a mensagem.';return;
+    }
+    status.textContent='Mensagem pronta no WhatsApp. Confira e envie na conversa.';
+  });
   dialog.querySelector('[data-delete]')?.addEventListener('click',async()=>{
     const date=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short',timeZone:'America/Sao_Paulo'}).format(new Date(appointment.starts_at));
     if(!window.confirm(`Excluir definitivamente o agendamento de ${patient?.full_name||'este paciente'} em ${date}? O horário será liberado. Essa ação não pode ser desfeita.`))return;
