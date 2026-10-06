@@ -22,6 +22,7 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     <section class="clinical-occurrence"><h3>Atendimento clínico não realizado</h3><p>Registre o que ocorreu e a conduta adotada. Pressão arterial é opcional; não há avaliação automática do resultado.</p><div class="form-grid"><label>Pressão sistólica (mmHg)<input name="bp_systolic" type="number" min="1" max="350" inputmode="numeric"></label><label>Pressão diastólica (mmHg)<input name="bp_diastolic" type="number" min="1" max="250" inputmode="numeric"></label></div><label>Ocorrência / motivo clínico<textarea name="occurrence" rows="3" placeholder="Ex.: aferição e decisão profissional de adiar o atendimento"></textarea></label></section>
     <section class="consultation-reminders"><h3>Retorno</h3><p>Defina uma data de referência. O aviso fica no painel; o horário do retorno só é reservado depois de confirmar a disponibilidade na agenda.</p><div class="form-grid"><label>Data desejada<input name="return_date" type="date"></label><label>Hora sugerida<input name="return_time" type="time" value="09:00"></label></div><button type="button" class="secondary" data-return>Marcar retorno nesta data</button></section>
     <section class="consultation-reminders"><h3>Lembretes da consulta</h3><p>O evento pode ser baixado, aberto no Google Calendar ou usado para preparar o lembrete do paciente.</p><div class="consultation-actions"><button type="button" class="secondary" data-calendar>Baixar .ics</button><button type="button" class="secondary" data-google-calendar>Google Calendar</button><button type="button" class="secondary" data-copy>Copiar lembrete do paciente</button></div></section>
+    <section class="consultation-reminders"><h3>Avisos ao paciente</h3><p>Confira os envios desta consulta por e-mail e WhatsApp.</p><button type="button" class="secondary" data-delivery>Ver situação dos envios</button><p data-delivery-status role="status"></p></section>
     <p role="status" class="consultation-feedback"></p>
     <div class="modal-actions">${['scheduled','confirmed','cancelled'].includes(appointment.status)?'<button class="danger appointment-delete" type="button" data-delete>Excluir agendamento</button>':''}<button class="secondary" type="button" data-close>Fechar</button><button class="primary" type="submit">Salvar consulta</button></div>
   </form>`;
@@ -50,6 +51,13 @@ export function openAppointmentCare(appointment, patient, clinicId, onSaved, con
     const date=new Intl.DateTimeFormat('pt-BR',{dateStyle:'full',timeStyle:'short',timeZone:'America/Sao_Paulo'}).format(new Date(appointment.starts_at));
     try {await navigator.clipboard.writeText(`Olá! Aqui é da Alegrare. Sua consulta está agendada para ${date} (horário de Brasília). Pode confirmar sua presença?`);feedback.textContent='Lembrete copiado. Nenhuma mensagem foi enviada pelo sistema.';}
     catch {feedback.textContent='O navegador não permitiu copiar a mensagem.';}
+  };
+  dialog.querySelector('[data-delivery]').onclick=async()=>{
+    const output=dialog.querySelector('[data-delivery-status]');output.textContent='Consultando envios…';
+    const {data,error}=await supabase.functions.invoke('dispatch-appointment-message',{body:{appointmentId:appointment.id,inspect:true}});
+    if(error){output.textContent='Não foi possível consultar os envios agora.';return;}
+    const labels={email:'E-mail',whatsapp:'WhatsApp',pending:'na fila',sending:'em processamento',sent:'enviado',failed:'falha; aguarda nova tentativa',skipped:'não enviado (contato ausente ou sem autorização)',obsolete:'substituído por atualização da consulta'};
+    output.textContent=data?.messages?.length?data.messages.map(item=>`${labels[item.channel]||item.channel}: ${labels[item.status]||item.status}`).join(' · '):'Nenhum aviso solicitado para esta consulta.';
   };
   dialog.querySelector('[data-calendar]').onclick=()=>{
     const stamp=value=>new Date(value).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
