@@ -107,6 +107,7 @@ body.calendar-overlay-open::before{content:"";position:fixed;inset:0;background:
 
 .simple-row.record-row{display:flex;align-items:center;flex-wrap:wrap}.real-doc-actions{flex-wrap:wrap}
 .privacy-hint{font-size:.78rem;line-height:1.5;color:#526267;background:#f4f7f5;border-left:3px solid #7aa99a;padding:.55rem .8rem;margin:1rem 0}
+.appointment-delete{margin-right:auto}
 .clinical-panel{border-top:1px solid #e5eae7;margin-top:1.2rem;padding-top:.5rem}
 .clinical-section{padding:1rem 0;border-bottom:1px solid #e8edeb}
 .clinical-section h3,.clinical-section h4{margin:.7rem 0}
