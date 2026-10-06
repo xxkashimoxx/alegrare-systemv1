@@ -209,6 +209,7 @@ async function fetchCalendarAppointments(start,end){
 function manageAppointment(appointment){
   if(!appointment||!profile)return;
   openAppointmentCare(appointment,patient(appointment.patient_id),profile.clinic_id,async(_updated,action)=>{
+    if(_updated?.source_payload?.patient_message_opt_in) void dispatchAppointmentMessage(_updated.id);
     modal=null;pageState={agenda:1,prescriptions:1,fiscal:1};
     try{await loadWorkspace();render();toast(action==='deleted'?'Agendamento excluído e horário liberado.':'Consulta atualizada.');}
     catch{toast(action==='deleted'?'Agendamento excluído. Atualize a página para recarregar a agenda.':'Consulta salva. Atualize a página para recarregar a agenda.',true);}
@@ -251,7 +252,16 @@ async function saveCalendarReschedule(appointment,startValue,endValue){
   if(index>=0)appointments[index]=data;else appointments.push(data);
   appointments.sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
   toast('Compromisso remarcado.');
+  if(data.source_payload?.patient_message_opt_in) void dispatchAppointmentMessage(data.id);
   return data;
+}
+async function dispatchAppointmentMessage(appointmentId){
+  try{
+    const {data,error}=await supabase.functions.invoke('dispatch-appointment-message',{body:{appointmentId}});
+    if(error)throw error;
+    if(data?.delivery==='awaiting_configuration')toast('Consulta salva. Envio ao paciente aguardando a conexão dos provedores.');
+    else if(data?.delivery&&Object.values(data.delivery).some(status=>status==='failed'))toast('Consulta salva. Confira a configuração dos canais de envio.',true);
+  }catch{toast('Consulta salva. Envio pendente de conexão; os dados do agendamento foram preservados.',true);}
 }
 function patientRow(p){const detail=[p.social_name&&p.social_name!==p.full_name?`Cadastro: ${p.full_name}`:'',p.current_treatment,p.phone].filter(Boolean).join(' · ')||'Cadastro inicial';return `<button class="patient-row" data-action="open-patient" data-id="${p.id}"><span class="avatar soft">${initials(patientDisplayName(p))}</span><div><b>${esc(patientDisplayName(p))}</b><small>${esc(detail)}</small></div><span class="status">${esc(label(p.status))}</span><i>›</i></button>`;}
 function patientsPage(){return `${pageHead('Pacientes','Cadastros ligados à agenda e às prescrições.','<button class="primary" data-action="new-patient">Novo paciente</button>')}<section class="card patient-list"><label class="patient-list-search">Filtrar pacientes<input type="search" data-patient-list-search placeholder="Nome, nome social ou telefone"></label><p class="search-feedback" data-patient-list-count>${patients.length} paciente(s)</p>${patients.length?patients.map(patientRow).join(''):empty('Nenhum paciente cadastrado','Comece pelo cadastro do primeiro paciente.','<button class="primary" data-action="new-patient">Cadastrar paciente</button>')}</section>`;}
@@ -288,6 +298,8 @@ function appointmentModal(){
       '<input type="hidden" name="return_for" value="'+esc(modal?.returnFor||'')+'">'+
       '<div class="form-grid"><label>Início<input name="starts_at" type="datetime-local" required value="'+range.start+'"></label><label>Término<input name="ends_at" type="datetime-local" required value="'+range.end+'"></label></div>'+
       '<label>Observações<textarea name="notes" rows="3"></textarea></label>'+
+      '<label class="availability-toggle"><input name="patient_message_opt_in" type="checkbox"> O paciente autorizou receber avisos desta consulta por WhatsApp e e-mail</label>'+
+      '<p class="consultation-help">Os avisos usam os contatos do cadastro. A entrega automática depende da conexão dos canais da clínica.</p>'+
       '<div class="modal-actions"><button class="secondary" type="button" data-action="close">Cancelar</button><button class="primary">Salvar compromisso</button></div>'+
     '</form></div>';
 }
@@ -397,7 +409,8 @@ async function saveAppointment(e){
   busy=true;
   try{await validateAppointment(profile.clinic_id,start,end);await availability?.check(start,end);}catch(error){busy=false;toast(friendlyAgendaError(error),true);return;}
   const returnFor=String(fd.get('return_for')||'');
-  const payload={clinic_id:profile.clinic_id,patient_id:patientId,professional_id:availability?.settings?.owner_id||profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:[String(fd.get('notes')).trim(),returnFor?`Retorno referente à consulta ${returnFor}`:''].filter(Boolean).join('\n')||null,created_by:profile.id};
+  const optIn=fd.has('patient_message_opt_in');
+  const payload={clinic_id:profile.clinic_id,patient_id:patientId,professional_id:availability?.settings?.owner_id||profile.id,starts_at:start.toISOString(),ends_at:end.toISOString(),procedure_name:String(fd.get('procedure_name')).trim(),notes:[String(fd.get('notes')).trim(),returnFor?`Retorno referente à consulta ${returnFor}`:''].filter(Boolean).join('\n')||null,created_by:profile.id,source_payload:optIn?{patient_message_opt_in:true,patient_message_opt_in_at:new Date().toISOString()}:{} };
   const {data,error}=await supabase.from('appointments').insert(payload).select('*').single();
   busy=false;
   if(error){toast(error.message,true);return;}
@@ -405,6 +418,7 @@ async function saveAppointment(e){
   if(location.hash==='#/agenda'||!location.hash){route='agenda';location.hash='#/agenda';render();}
   else location.hash='#/agenda';
   toast(data.approval_status==='pending'?'Horário reservado. Aguardando confirmação da responsável.':'Compromisso agendado.');
+  if(optIn)void dispatchAppointmentMessage(data.id);
 }
 
 async function savePrescription(e){e.preventDefault();if(busy)return;if(!selectedMeds.length){toast('Adicione ao menos um medicamento.',true);return;}busy=true;const fd=new FormData(e.currentTarget),payload={clinic_id:profile.clinic_id,patient_id:String(fd.get('patient_id')),title:String(fd.get('title')).trim(),body:String(fd.get('body')).trim(),status:'pending_signature',author_id:profile.id};const created=await supabase.from('prescriptions').insert(payload).select('*').single();if(created.error){busy=false;toast(created.error.message,true);return;}const items=selectedMeds.map((m,i)=>({clinic_id:profile.clinic_id,prescription_id:created.data.id,medication_id:m.id,medication_name:m.display_name,instructions:m.instructions?.trim()||payload.body,position:i}));const itemResult=await supabase.from('prescription_items').insert(items).select('id,medication_id,medication_name,instructions,position');busy=false;if(itemResult.error){await supabase.from('prescriptions').delete().eq('id',created.data.id);toast(itemResult.error.message,true);return;}prescriptions.unshift({...created.data,prescription_items:itemResult.data});selectedMeds=[];modal=null;location.hash='#/prescriptions';render();toast('Prescrição criada e pronta para assinatura.');}
