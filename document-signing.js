@@ -166,6 +166,7 @@ async function openCreateDocument({patientId='',anamnesisId=''}={}){
       const title=form.elements.title.value.trim(),file=await createDocumentImage({title,body:form.elements.body.value.trim(),patient:selected,responsibleName,responsibleDocument,professional:professionalName,accompanied:form.elements.accompanied.checked});
       const {patientToken}=await storeDocument({s,p,patientId:selected.id,patientName:selected.full_name,title,file,signersMode:form.elements.signers.value,signerName:selected.full_name,email:selected.email,phone:selected.phone,accompanied:form.elements.accompanied.checked,anamnesisId:anamnesisId||null});
       closeModal();await refreshDocuments(1);
+      await refreshPatientDocuments();
       if(patientToken)showPatientLink(patientToken,title,selected.full_name,selected.phone,selected.email);else toast('Documento preparado para assinatura profissional.');
     }catch(error){feedback.textContent=error.message||'Não foi possível criar o documento.';button.disabled=false;}
   };
@@ -266,7 +267,34 @@ async function openDocument(doc,signed=false){
 async function signProfessional(id){
   const s=await session(); if(!s){toast('Sua sessão expirou. Entre novamente.',true);return;}
   const p=await profile();const {data,error}=await supabase.from('document_signers').update({status:'signed',signed_at:new Date().toISOString(),signature_method:'authenticated_clinic_user'}).eq('clinic_id',p.clinic_id).eq('id',id).eq('signer_type','professional').eq('signer_user_id',s.user.id).eq('status','pending').select('id').maybeSingle();
-  if(error||!data){toast(error?.message||'A assinatura mudou ou seu perfil não permite assinar. Atualize os documentos.',true);return;} toast('Assinatura profissional registrada.'); refreshDocuments();
+  if(error||!data){toast(error?.message||'A assinatura mudou ou seu perfil não permite assinar. Atualize os documentos.',true);return;} toast('Assinatura profissional registrada.'); refreshDocuments();refreshPatientDocuments();
+}
+
+async function refreshPatientDocuments(){
+  const host=$('#patient-documents');if(!host||host.dataset.loading==='true')return;
+  const patientId=host.dataset.patientId;
+  host.dataset.loading='true';host.textContent='Carregando documentos…';
+  try{
+    const p=await profile();if(!p?.clinic_id)throw new Error('Entre no painel para consultar documentos.');
+    const {data,error}=await supabase.from('documents').select('id,title,patient_name,file_name,file_path,mime_type,status,created_at,document_signers(id,signer_type,signer_user_id,signer_name,signer_email,status,signing_token,signed_at,updated_at,metadata)').eq('clinic_id',p.clinic_id).eq('patient_id',patientId).order('created_at',{ascending:false}).limit(30);
+    if(error)throw error;if(!host.isConnected||host.dataset.patientId!==patientId)return;
+    host.innerHTML=data?.length?data.map(doc=>{
+      const patient=doc.document_signers?.find(s=>s.signer_type==='patient'),professional=doc.document_signers?.find(s=>s.signer_type==='professional');
+      return `<article class="patient-document-row"><div><b>${esc(doc.title)}</b><small>${esc(fmtDate(doc.created_at))} · ${patient?`Paciente: ${patient.status==='signed'?'assinado':'aguardando'}`:'Sem assinatura do paciente'} · ${professional?`Profissional: ${professional.status==='signed'?'assinado':'aguardando'}`:'Profissional não solicitada'}</small></div><div class="consultation-actions"><button type="button" class="real-btn ghost small" data-patient-document-details="${doc.id}">Assinaturas</button>${patient?.metadata?.signed_copy_path?`<button type="button" class="real-btn primary small" data-patient-document-signed="${doc.id}">Ver termo assinado</button>`:''}${patient?.status==='pending'?`<button type="button" class="real-btn ghost small" data-patient-document-link="${doc.id}">Copiar link</button>`:''}</div></article>`;
+    }).join(''):'<p class="empty">Nenhum documento deste paciente.</p>';
+    host.querySelectorAll('[data-patient-document-details]').forEach(button=>button.onclick=()=>openDocumentDetails(data.find(doc=>doc.id===button.dataset.patientDocumentDetails)));
+    host.querySelectorAll('[data-patient-document-signed]').forEach(button=>button.onclick=()=>openDocument(data.find(doc=>doc.id===button.dataset.patientDocumentSigned),true));
+    host.querySelectorAll('[data-patient-document-link]').forEach(button=>button.onclick=async()=>{const signer=data.find(doc=>doc.id===button.dataset.patientDocumentLink)?.document_signers?.find(s=>s.signer_type==='patient');if(!signer)return;try{await navigator.clipboard.writeText(patientLink(signer.signing_token));toast('Link individual copiado.');}catch{toast('Não foi possível copiar o link.',true);}});
+  }catch(error){if(host.isConnected)host.textContent=error.message||'Não foi possível carregar documentos.';}
+  finally{if(host.isConnected)host.dataset.loading='false';}
+}
+
+function injectPatientDocuments(){
+  const host=$('#patient-documents');if(!host||host.dataset.bound==='true')return;
+  host.dataset.bound='true';
+  $('[data-patient-doc-refresh]')?.addEventListener('click',refreshPatientDocuments);
+  $('[data-patient-create-document]')?.addEventListener('click',()=>openCreateDocument({patientId:host.dataset.patientId}));
+  refreshPatientDocuments();
 }
 
 async function injectClinicUI(){
@@ -326,11 +354,11 @@ async function renderPatientSigning(){
   return true;
 }
 
-const observer=new MutationObserver(()=>{ if(isPatientRoute()) renderPatientSigning(); else {patientRenderToken=null;injectClinicUI();} });
+const observer=new MutationObserver(()=>{ if(isPatientRoute()) renderPatientSigning(); else {patientRenderToken=null;injectClinicUI();injectPatientDocuments();} });
 observer.observe(document.documentElement,{childList:true,subtree:true});
 window.addEventListener('hashchange',()=>setTimeout(()=>{ if(isPatientRoute()) renderPatientSigning(); else injectClinicUI(); },0));
-window.addEventListener('alegrare:rendered',injectClinicUI);
+window.addEventListener('alegrare:rendered',()=>{injectClinicUI();injectPatientDocuments();});
 window.addEventListener('alegrare:upload-document',openUpload);
 window.addEventListener('alegrare:create-anamnesis-document',e=>openCreateDocument(e.detail||{}));
 supabase.auth.onAuthStateChange(()=>{cachedProfile=null;setTimeout(refreshDocuments,0);});
-if(!(await renderPatientSigning())) injectClinicUI();
+if(!(await renderPatientSigning())){injectClinicUI();injectPatientDocuments();}
