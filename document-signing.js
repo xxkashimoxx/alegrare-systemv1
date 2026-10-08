@@ -84,6 +84,7 @@ async function uploadDocument(e){
   const file=form.elements.file.files?.[0];
   if(!file) return;
   if(file.size>20*1024*1024){toast('Arquivo maior que 20 MB.',true);return;}
+  if(form.elements.signers.value!=='professional'&&!(/\.(pdf|png|jpe?g)$/i.test(file.name))){toast('Para assinatura do paciente, envie PDF, PNG ou JPG. Converta o DOCX para PDF.',true);return;}
   btn.disabled=true; btn.textContent='Enviando...';
   try{
     const s=await session(); const p=await profile(); if(!s||!p?.clinic_id) throw new Error('Sessão da clínica não encontrada.');
@@ -216,9 +217,10 @@ async function refreshDocuments(page=documentPage){
     const patient=doc.document_signers?.find(x=>x.signer_type==='patient');
     const professional=doc.document_signers?.find(x=>x.signer_type==='professional');
     const labels=[]; if(professional) labels.push(`Profissional: ${professional.status==='signed'?'assinado':'pendente'}`); if(patient) labels.push(`Paciente: ${patient.status==='signed'?'assinado':'pendente'}`);
-    return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">${esc((doc.file_name||'Arquivo').split('.').pop().toUpperCase().slice(0,5))}</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions"><button class="real-btn ghost small" data-doc-open="${doc.id}">Abrir arquivo</button><button class="real-btn ghost small" data-doc-details="${doc.id}">Detalhes</button>${professional?.status==='pending'&&professional.signer_user_id===p.id?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
+    return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">${esc((doc.file_name||'Arquivo').split('.').pop().toUpperCase().slice(0,5))}</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions"><button class="real-btn ghost small" data-doc-open="${doc.id}">Original</button>${patient?.metadata?.signed_copy_path?`<button class="real-btn primary small" data-doc-signed="${doc.id}">Ver termo assinado</button>`:''}<button class="real-btn ghost small" data-doc-details="${doc.id}">Assinaturas</button>${professional?.status==='pending'&&professional.signer_user_id===p.id?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
   }).join('')}${documentsPagination()}`;
   host.querySelectorAll('[data-doc-open]').forEach(b=>b.onclick=()=>openDocument(data.find(doc=>doc.id===b.dataset.docOpen)));
+  host.querySelectorAll('[data-doc-signed]').forEach(b=>b.onclick=()=>openDocument(data.find(doc=>doc.id===b.dataset.docSigned),true));
   host.querySelectorAll('[data-doc-details]').forEach(b=>b.onclick=()=>openDocumentDetails(data.find(doc=>doc.id===b.dataset.docDetails)));
   host.querySelectorAll('[data-prof-sign]').forEach(b=>b.addEventListener('click',()=>signProfessional(b.dataset.profSign)));
   host.querySelectorAll('[data-copy-token]').forEach(b=>b.addEventListener('click',async()=>{await navigator.clipboard.writeText(patientLink(b.dataset.copyToken));toast('Link do paciente copiado.');}));
@@ -236,10 +238,12 @@ function openDocumentDetails(doc){
     <p><b>Solicitação criada em:</b> ${esc(fmtDate(doc.created_at))}</p><p><b>Destinatário:</b> ${esc(signer?.signer_name||'Sem assinatura do paciente')} ${signer?.signer_email?`· ${esc(signer.signer_email)}`:''}</p>
     <p><b>Envio do link:</b> ${meta.sent_at?`Registrado manualmente em ${esc(fmtDate(meta.sent_at))} · ${esc(meta.sent_channel||'canal não informado')}`:'Não registrado'}</p>
     <p><b>Recebimento informado:</b> ${meta.received_at?esc(fmtDate(meta.received_at)):'Não registrado'}</p><p><b>Preenchimento acompanhado pela profissional:</b> ${meta.accompanied_by_professional?'Sim':'Não informado'}</p>
+    <div class="real-signature-status"><div><b>Paciente</b><span class="real-status ${signer?.status==='signed'?'signed':'pending'}">${signer?.status==='signed'?'Assinado':'Aguardando'}</span></div><div><b>Profissional</b><span class="real-status ${professional?.status==='signed'?'signed':'pending'}">${professional?.status==='signed'?'Assinado':professional?'Aguardando':'Não solicitada'}</span></div></div>
     <p><b>Assinatura do paciente:</b> ${signer?.signed_at?`${esc(signer.signer_name)} · ${esc(fmtDate(signer.signed_at))}`:'Pendente'}</p><p><b>Localidade declarada pelo paciente:</b> ${esc(meta.signer_location||'Não informada')}</p>
     <p><b>Assinatura profissional:</b> ${professional?.signed_at?esc(fmtDate(professional.signed_at)):(professional?'Pendente':'Não solicitada')}</p>
     <p class="privacy-hint">Envio e recebimento são confirmações manuais da equipe. A assinatura guarda aceite, data e dados técnicos de auditoria; localidade é declarada pelo paciente.</p>
-    <div class="consultation-actions"><a class="real-btn ghost" href="${esc(email)}">Preparar e-mail para Danielle</a>${signer&&!meta.sent_at?'<button class="real-btn ghost" data-record-sent>Registrar envio do link</button>':''}${signer&&!meta.received_at?'<button class="real-btn ghost" data-record-received>Registrar recebimento informado</button>':''}</div><p role="status" data-delivery-feedback></p></div>`);
+    <div class="consultation-actions">${meta.signed_copy_path?'<button class="real-btn primary" data-details-signed>Visualizar / baixar termo assinado</button>':''}<a class="real-btn ghost" href="${esc(email)}">Preparar e-mail para Danielle</a>${signer&&!meta.sent_at?'<button class="real-btn ghost" data-record-sent>Registrar envio do link</button>':''}${signer&&!meta.received_at?'<button class="real-btn ghost" data-record-received>Registrar recebimento informado</button>':''}</div><p role="status" data-delivery-feedback></p></div>`);
+  m.querySelector('[data-details-signed]')?.addEventListener('click',()=>openDocument(doc,true));
   for(const [selector,key] of [['[data-record-sent]','sent'],['[data-record-received]','received']]){
     m.querySelector(selector)?.addEventListener('click',async e=>{
       const button=e.currentTarget,feedback=m.querySelector('[data-delivery-feedback]');button.disabled=true;
@@ -253,9 +257,9 @@ function openDocumentDetails(doc){
   }
 }
 
-async function openDocument(doc){
- const m=modal(`<div class="real-modal-head"><h2>${esc(doc.title)}</h2><button data-real-close aria-label="Fechar">×</button></div><div id="real-file-preview"><p>Preparando acesso ao arquivo…</p></div>`);
- try{if(!doc.file_path)throw new Error('O arquivo não possui caminho de armazenamento.');const {data,error}=await supabase.storage.from('clinic-documents').createSignedUrl(doc.file_path,300);if(error)throw error;if(!m.isConnected)return;const url=data.signedUrl,host=$('#real-file-preview',m);host.innerHTML=`<p>Paciente: ${esc(doc.patient_name)} · ${esc(doc.file_name)}</p><a class="real-btn primary" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Abrir / baixar arquivo</a><p class="real-help">O acesso ao arquivo expira em cinco minutos.</p>${(doc.mime_type||'').startsWith('image/')?`<img class="document-preview-image" src="${esc(url)}" alt="Documento">`:(doc.mime_type==='application/pdf'||/\.pdf$/i.test(doc.file_name))?`<iframe class="document-preview-frame" src="${esc(url)}" title="Visualização do documento"></iframe>`:''}`;
+async function openDocument(doc,signed=false){
+ const m=modal(`<div class="real-modal-head"><h2>${esc(doc.title)}${signed?' · assinado':''}</h2><button data-real-close aria-label="Fechar">×</button></div><div id="real-file-preview"><p>Preparando acesso ao arquivo…</p></div>`);
+ try{const signer=doc.document_signers?.find(x=>x.signer_type==='patient');const path=signed?signer?.metadata?.signed_copy_path:doc.file_path;if(!path)throw new Error('A cópia assinada ainda não está disponível.');const {data,error}=await supabase.storage.from('clinic-documents').createSignedUrl(path,300);if(error)throw error;if(!m.isConnected)return;const url=data.signedUrl,host=$('#real-file-preview',m);host.innerHTML=`<p>Paciente: ${esc(doc.patient_name)} · ${signed?'Cópia com assinatura':esc(doc.file_name)}</p><a class="real-btn primary" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Abrir / baixar ${signed?'termo assinado':'arquivo original'}</a><p class="real-help">O acesso ao arquivo expira em cinco minutos.</p>${!signed&&(doc.mime_type||'').startsWith('image/')?`<img class="document-preview-image" src="${esc(url)}" alt="Documento">`:(signed||doc.mime_type==='application/pdf'||/\.pdf$/i.test(doc.file_name))?`<iframe class="document-preview-frame" src="${esc(url)}" title="Visualização do documento"></iframe>`:''}`;
  }catch(error){if(m.isConnected)$('#real-file-preview',m).textContent=error.message||'Não foi possível abrir o arquivo.';}
 }
 
@@ -284,6 +288,19 @@ async function injectClinicUI(){
 function isPatientRoute(){ return /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash); }
 function tokenFromRoute(){ return location.hash.split('/')[2] || ''; }
 
+function bindSignatureCanvas(form){
+  const canvas=$('[data-signature-canvas]',form),ctx=canvas.getContext('2d');
+  if(!ctx)return ()=>'';
+  ctx.strokeStyle='#193746';ctx.lineWidth=3.5;ctx.lineCap='round';ctx.lineJoin='round';
+  let drawing=false,hasInk=false;
+  const point=e=>{const box=canvas.getBoundingClientRect();return {x:(e.clientX-box.left)*canvas.width/box.width,y:(e.clientY-box.top)*canvas.height/box.height};};
+  canvas.addEventListener('pointerdown',e=>{e.preventDefault();const p=point(e);drawing=true;hasInk=true;ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x+.1,p.y+.1);ctx.stroke();canvas.setPointerCapture(e.pointerId);});
+  canvas.addEventListener('pointermove',e=>{if(!drawing)return;e.preventDefault();const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke();});
+  for(const type of ['pointerup','pointercancel'])canvas.addEventListener(type,()=>{drawing=false;});
+  $('[data-clear-signature]',form).addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);hasInk=false;});
+  return ()=>hasInk?canvas.toDataURL('image/png'):'';
+}
+
 async function renderPatientSigning(){
   if(!isPatientRoute()) return false;
   const token=tokenFromRoute();if(patientRenderToken===token)return true;patientRenderToken=token;
@@ -295,13 +312,14 @@ async function renderPatientSigning(){
     if(!res.ok) throw new Error(data.error||'Link inválido.');
     const already=data.signer.status==='signed';
     const viewer=(data.document.mimeType||'').startsWith('image/')?`<img class="patient-document-image" src="${esc(data.document.url)}" alt="Documento">`:`<iframe class="patient-document-view" src="${esc(data.document.url)}" title="Documento"></iframe>`;
-    host.innerHTML=`<div class="patient-sign-head"><small>DOCUMENTO PARA ASSINATURA</small><h1>${esc(data.document.title)}</h1><p>Paciente: <b>${esc(data.document.patientName)}</b></p>${data.signer.accompanied?'<p>Preenchimento da anamnese realizado com acompanhamento da profissional.</p>':''}</div>${viewer}${already?`<div class="patient-signed-ok">✓ Assinatura registrada em ${esc(fmtDate(data.signer.signedAt))}${data.signer.location?` · ${esc(data.signer.location)}`:''}</div>`:`<form id="patient-sign-form" class="real-form patient-form"><label>Assinatura do paciente · nome completo<input name="name" value="${esc(data.signer.name)}" required minlength="3"></label><label>Localidade declarada (cidade/UF, opcional)<input name="location" maxlength="120" placeholder="Ex.: São Paulo/SP"></label><label class="patient-consent"><input type="checkbox" name="accepted" required><span>Li o documento apresentado e concordo com seu conteúdo.</span></label><button class="real-btn primary patient-submit">Assinar documento</button><p class="real-help">Este fluxo registra aceite eletrônico, data, navegador e informações técnicas de auditoria. Não representa certificado ICP-Brasil.</p></form>`}`;
+    host.innerHTML=`<div class="patient-sign-head"><small>DOCUMENTO PARA ASSINATURA</small><h1>${esc(data.document.title)}</h1><p>Paciente: <b>${esc(data.document.patientName)}</b></p>${data.signer.accompanied?'<p>Preenchimento da anamnese realizado com acompanhamento da profissional.</p>':''}<div class="real-signature-status"><div><b>Paciente</b><span class="real-status ${already?'signed':'pending'}">${already?'Assinado':'Aguardando'}</span></div>${data.professional?`<div><b>Profissional</b><span class="real-status ${data.professional.status==='signed'?'signed':'pending'}">${data.professional.status==='signed'?'Assinado':'Aguardando'}</span></div>`:''}</div></div>${viewer}${already?`<div class="patient-signed-ok">✓ Assinatura registrada em ${esc(fmtDate(data.signer.signedAt))}${data.signer.location?` · ${esc(data.signer.location)}`:''}</div>${data.document.signedCopy?`<a class="real-btn primary patient-download" target="_blank" rel="noopener noreferrer" href="${esc(data.document.url)}">Baixar documento assinado</a>`:''}`:`<form id="patient-sign-form" class="real-form patient-form"><label>Assinatura do paciente · nome completo<input name="name" value="${esc(data.signer.name)}" required minlength="3"></label><label>Localidade declarada (cidade/UF, opcional)<input name="location" maxlength="120" placeholder="Ex.: Rio de Janeiro/RJ"></label><div class="patient-signature-field"><b>Desenhe sua assinatura</b><canvas data-signature-canvas width="900" height="240" aria-label="Área para desenhar assinatura com o dedo, mouse ou caneta"></canvas><button type="button" class="real-btn ghost" data-clear-signature>Limpar assinatura</button></div><label class="patient-consent"><input type="checkbox" name="accepted" required><span>Li o documento apresentado e concordo com seu conteúdo.</span></label><button class="real-btn primary patient-submit">Assinar e devolver à Alegrare</button><p class="real-help">Sua assinatura aparecerá na cópia final em PDF, disponível para você e para a clínica. O aceite registra data, navegador e informações técnicas de auditoria; não representa certificado ICP-Brasil.</p></form>`}`;
+    const getSignature=$('#patient-sign-form',host)?bindSignatureCanvas($('#patient-sign-form',host)):null;
     $('#patient-sign-form',host)?.addEventListener('submit',async e=>{
-      e.preventDefault(); const form=e.currentTarget, btn=$('.patient-submit',form); btn.disabled=true;btn.textContent='Registrando...';
+      e.preventDefault(); const form=e.currentTarget, signature=getSignature?.();if(!signature){toast('Desenhe sua assinatura antes de concluir.',true);return;}const btn=$('.patient-submit',form); btn.disabled=true;btn.textContent='Registrando...';
       try{
-        const r=await fetch(SIGN_FUNCTION,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_KEY},body:JSON.stringify({token:tokenFromRoute(),signerName:form.elements.name.value,location:form.elements.location.value,accepted:form.elements.accepted.checked})}); const result=await r.json();
+        const r=await fetch(SIGN_FUNCTION,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_KEY},body:JSON.stringify({token:tokenFromRoute(),signerName:form.elements.name.value,location:form.elements.location.value,accepted:form.elements.accepted.checked,signature})}); const result=await r.json();
         if(!r.ok) throw new Error(result.error||'Falha ao assinar.');
-        host.innerHTML=`<div class="patient-complete"><span>✓</span><h1>Documento assinado</h1><p>O aceite foi registrado em ${esc(fmtDate(result.signedAt))}.</p><small>Você já pode fechar esta página.</small></div>`;
+        host.innerHTML=`<div class="patient-complete"><span>✓</span><h1>Documento assinado</h1><p>O termo com a sua assinatura foi devolvido à clínica em ${esc(fmtDate(result.signedAt))}.</p>${result.signedUrl?`<a class="real-btn primary patient-download" target="_blank" rel="noopener noreferrer" href="${esc(result.signedUrl)}">Visualizar / baixar termo assinado</a>`:''}<small>Você já pode fechar esta página.</small></div>`;
       }catch(err){toast(err.message,true);btn.disabled=false;btn.textContent='Assinar documento';}
     });
   }catch(err){host.innerHTML=`<div class="patient-complete error"><span>!</span><h1>Link indisponível</h1><p>${esc(err.message)}</p></div>`;}
