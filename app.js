@@ -10,6 +10,7 @@ import { FinancePanel } from './finance-panel.js';
 import { loadPatientDirectory } from './clinic-directory.js';
 import { ClinicalPanel } from './clinical-panel.js';
 import { CatalogManager } from './catalog-manager.js';
+import { StockAlertPanel } from './stock-alert-panel.js';
 
 const app = document.querySelector('#app');
 const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
@@ -20,7 +21,7 @@ let session, profile, clinic, modal;
 let patients = [], appointments = [], prescriptions = [], medications = [];
 let documentsCount = 0, fiscalDocuments = [], selectedMeds = [], busy = false;
 let agendaCalendar = null, calendarSearchTerm = '', calendarPatientId = '', calendarExpanded = false;
-let availability=null, prescriptionBrowser=null, financePanel=null, clinicalPanel=null, catalogManager=null, medSearchSequence=0, medSearchTimer=null;
+let availability=null, prescriptionBrowser=null, financePanel=null, clinicalPanel=null, catalogManager=null, stockAlertPanel=null, medSearchSequence=0, medSearchTimer=null;
 const PAGE_SIZE = 12;
 let pageState = {agenda:1,prescriptions:1,fiscal:1};
 let pageTotals = {agenda:0,prescriptions:0,fiscal:0};
@@ -121,7 +122,7 @@ async function loadPage(kind,page){const pages=Math.max(1,Math.ceil((pageTotals[
 function appointmentRow(a){const p=patient(a.patient_id);return `<article class="appointment-row"><time><b>${hour(a.starts_at)}</b><small>${day(a.starts_at)}</small></time><span class="avatar soft">${initials(patientDisplayName(p))}</span><div><b>${esc(patientDisplayName(p))}</b><small>${esc(a.procedure_name||'Consulta')} · ${esc(label(a.status))}</small></div><div class="consultation-actions"><span class="status ${esc(a.status)}">${a.approval_status==='pending'?'Aguardando confirmação':esc(label(a.status))}</span><button class="secondary" data-consultation="${esc(a.id)}">Gerenciar consulta</button></div></article>`;}
 
 function birthdayCard(){const people=birthdaysToday();if(!people.length)return '';return `<section class="card birthday-card"><div class="card-title"><div><span class="birthday-badge">ANIVERSARIANTE DE HOJE</span><h2>${people.length} paciente${people.length===1?'':'s'} merece${people.length===1?'':'m'} atenção</h2><p>Mensagem personalizada pronta para abrir no WhatsApp.</p></div><span class="birthday-tag">🎂 Hoje</span></div><div class="birthday-list">${people.map(p=>`<article class="birthday-row"><span class="avatar birthday-avatar">${initials(patientDisplayName(p))}</span><div><b>${esc(patientDisplayName(p))}</b><small>${esc(p.phone||'Telefone não informado')}</small></div>${birthdayWhatsapp(p)?`<a class="primary birthday-action" target="_blank" rel="noopener noreferrer" href="${esc(birthdayWhatsapp(p))}">Enviar mensagem</a>`:'<span class="status">Sem WhatsApp cadastrado</span>'}</article>`).join('')}</div></section>`;}
-function homePage(){const todayItems=today().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));return `${pageHead('Visão geral','Agenda de hoje e acesso rápido ao que importa.','<button class="primary" data-action="new-appointment">Novo agendamento</button>')}${birthdayCard()}<section class="card home-today"><div class="card-title"><div><h2>Hoje · ${todayItems.length} compromisso${todayItems.length===1?'':'s'}</h2></div><button class="link" data-route="agenda">Abrir agenda</button></div>${todayItems.length?`<div class="appointment-list">${todayItems.slice(0,4).map(appointmentRow).join('')}</div>${todayItems.length>4?`<p class="search-feedback">Mais ${todayItems.length-4} na agenda.</p>`:''}`:'<p class="empty">Nenhum compromisso hoje.</p>'}</section>`;}
+function homePage(){const todayItems=today().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));return `${pageHead('Visão geral','Agenda de hoje e acesso rápido ao que importa.','<button class="primary" data-action="new-appointment">Novo agendamento</button>')}${birthdayCard()}<section class="card home-today"><div class="card-title"><div><h2>Hoje · ${todayItems.length} compromisso${todayItems.length===1?'':'s'}</h2></div><button class="link" data-route="agenda">Abrir agenda</button></div>${todayItems.length?`<div class="appointment-list">${todayItems.slice(0,4).map(appointmentRow).join('')}</div>${todayItems.length>4?`<p class="search-feedback">Mais ${todayItems.length-4} na agenda.</p>`:''}`:'<p class="empty">Nenhum compromisso hoje.</p>'}</section><section class="card" id="home-stock-alerts" aria-label="Estoque e validade"></section>`;}
 
 function agendaPage(){
   const now=new Date(),history=appointments.filter(a=>new Date(a.ends_at)<now).sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at));
@@ -317,7 +318,7 @@ function renderModal(){if(modal?.type==='patient')return `<div class="modal-back
 
 function render(){
   if(agendaCalendar){agendaCalendar.destroy();agendaCalendar=null;}
-  prescriptionBrowser?.destroy();prescriptionBrowser=null;financePanel?.destroy();financePanel=null;clinicalPanel?.destroy();clinicalPanel=null;catalogManager?.destroy();catalogManager=null;medSearchSequence++;clearTimeout(medSearchTimer);
+  prescriptionBrowser?.destroy();prescriptionBrowser=null;financePanel?.destroy();financePanel=null;clinicalPanel?.destroy();clinicalPanel=null;catalogManager?.destroy();catalogManager=null;stockAlertPanel?.destroy();stockAlertPanel=null;medSearchSequence++;clearTimeout(medSearchTimer);
   document.body.classList.remove('calendar-overlay-open');
   const pages={home:homePage,agenda:agendaPage,patients:patientsPage,catalog:()=>`${pageHead('Medicamentos e estoque','Cadastre medicamentos para prescrição e organize produtos, insumos e itens de limpeza.')}`+'<section class="card" id="catalog-manager"></section>',prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};
   app.innerHTML=shell((pages[route]||homePage)());
@@ -347,7 +348,8 @@ function render(){
   }
   if(route==='prescriptions'){prescriptionBrowser=new PrescriptionBrowser({clinicId:profile.clinic_id,patients,onView:previewPrescription,onSign:async r=>{if(!prescriptions.some(p=>p.id===r.id))prescriptions.push(r);await signPrescription(r.id);}});prescriptionBrowser.mount(document.querySelector('#prescription-browser'));}
   if(route==='fiscal'){financePanel=new FinancePanel({profile,patients,onSaved:()=>toast('Registro financeiro salvo.')});financePanel.mount(document.querySelector('#finance-panel'));}
-  if(route==='catalog'){catalogManager=new CatalogManager({clinicId:profile.clinic_id,profileId:profile.id});catalogManager.mount(document.querySelector('#catalog-manager'));}
+  if(route==='catalog'){const parts=location.hash.split('/');catalogManager=new CatalogManager({clinicId:profile.clinic_id,profileId:profile.id,initialType:parts[2],initialAlert:parts[3]});catalogManager.mount(document.querySelector('#catalog-manager'));}
+  const stockHost=document.querySelector('#home-stock-alerts');if(stockHost){stockAlertPanel=new StockAlertPanel(profile.clinic_id);stockAlertPanel.mount(stockHost);}
   window.dispatchEvent(new CustomEvent('alegrare:rendered'));
 }
 function bindGlobalPatientSearch(){
@@ -457,7 +459,7 @@ async function action(name,id){
 }
 
 window.addEventListener('hashchange',()=>{if(patientSigningRoute())return;route=location.hash.replace('#/','').split('/')[0]||'home';modal=null;selectedMeds=[];if(session)render();});
-supabase.auth.onAuthStateChange((event,next)=>{session=next;if(event==='SIGNED_OUT'&&!patientSigningRoute())loginScreen();});
+supabase.auth.onAuthStateChange((event,next)=>{session=next;if(event==='SIGNED_OUT'&&!patientSigningRoute()){catalogManager?.destroy();catalogManager=null;stockAlertPanel?.destroy();stockAlertPanel=null;loginScreen();}});
 if(!patientSigningRoute())initialize();
 
 document.addEventListener('click',event=>{
@@ -466,3 +468,4 @@ document.addEventListener('click',event=>{
   const appointment=appointments.find(item=>item.id===button.dataset.consultation);
   if(appointment)manageAppointment(appointment);
 });
+
