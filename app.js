@@ -9,17 +9,18 @@ import { PrescriptionBrowser } from './prescription-browser.js';
 import { FinancePanel } from './finance-panel.js';
 import { loadPatientDirectory } from './clinic-directory.js';
 import { ClinicalPanel } from './clinical-panel.js';
+import { CatalogManager } from './catalog-manager.js';
 
 const app = document.querySelector('#app');
 const patientSigningRoute = () => /^#\/assinar\/[0-9a-f-]{36}$/i.test(location.hash);
 // Prescrições ficam vinculadas ao prontuário do paciente; não ocupam mais um menu separado.
-const nav = [['home','Visão geral'],['agenda','Agenda'],['patients','Pacientes'],['documents','Assinaturas'],['fiscal','Financeiro']];
+const nav = [['home','Visão geral'],['agenda','Agenda'],['patients','Pacientes'],['catalog','Medicamentos e estoque'],['documents','Assinaturas'],['fiscal','Financeiro']];
 let route = location.hash.replace('#/','').split('/')[0] || 'home';
 let session, profile, clinic, modal;
 let patients = [], appointments = [], prescriptions = [], medications = [];
 let documentsCount = 0, fiscalDocuments = [], selectedMeds = [], busy = false;
 let agendaCalendar = null, calendarSearchTerm = '', calendarPatientId = '', calendarExpanded = false;
-let availability=null, prescriptionBrowser=null, financePanel=null, clinicalPanel=null, medSearchSequence=0, medSearchTimer=null;
+let availability=null, prescriptionBrowser=null, financePanel=null, clinicalPanel=null, catalogManager=null, medSearchSequence=0, medSearchTimer=null;
 const PAGE_SIZE = 12;
 let pageState = {agenda:1,prescriptions:1,fiscal:1};
 let pageTotals = {agenda:0,prescriptions:0,fiscal:0};
@@ -316,9 +317,9 @@ function renderModal(){if(modal?.type==='patient')return `<div class="modal-back
 
 function render(){
   if(agendaCalendar){agendaCalendar.destroy();agendaCalendar=null;}
-  prescriptionBrowser?.destroy();prescriptionBrowser=null;financePanel?.destroy();financePanel=null;clinicalPanel?.destroy();clinicalPanel=null;medSearchSequence++;clearTimeout(medSearchTimer);
+  prescriptionBrowser?.destroy();prescriptionBrowser=null;financePanel?.destroy();financePanel=null;clinicalPanel?.destroy();clinicalPanel=null;catalogManager?.destroy();catalogManager=null;medSearchSequence++;clearTimeout(medSearchTimer);
   document.body.classList.remove('calendar-overlay-open');
-  const pages={home:homePage,agenda:agendaPage,patients:patientsPage,prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};
+  const pages={home:homePage,agenda:agendaPage,patients:patientsPage,catalog:()=>`${pageHead('Medicamentos e estoque','Cadastre medicamentos para prescrição e organize produtos, insumos e itens de limpeza.')}`+'<section class="card" id="catalog-manager"></section>',prescriptions:prescriptionsPage,documents:documentsPage,fiscal:fiscalPage};
   app.innerHTML=shell((pages[route]||homePage)());
   bind();
   if(modal?.type==='patient'){clinicalPanel=new ClinicalPanel({clinicId:profile.clinic_id,patient:patient(modal.id),profile});clinicalPanel.mount(document.querySelector('#clinical-panel'));}
@@ -346,6 +347,7 @@ function render(){
   }
   if(route==='prescriptions'){prescriptionBrowser=new PrescriptionBrowser({clinicId:profile.clinic_id,patients,onView:previewPrescription,onSign:async r=>{if(!prescriptions.some(p=>p.id===r.id))prescriptions.push(r);await signPrescription(r.id);}});prescriptionBrowser.mount(document.querySelector('#prescription-browser'));}
   if(route==='fiscal'){financePanel=new FinancePanel({profile,patients,onSaved:()=>toast('Registro financeiro salvo.')});financePanel.mount(document.querySelector('#finance-panel'));}
+  if(route==='catalog'){catalogManager=new CatalogManager({clinicId:profile.clinic_id,profileId:profile.id});catalogManager.mount(document.querySelector('#catalog-manager'));}
   window.dispatchEvent(new CustomEvent('alegrare:rendered'));
 }
 function bindGlobalPatientSearch(){
