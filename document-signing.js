@@ -2,6 +2,7 @@ import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase-client.js';
 import { bindPatientPicker, searchPattern, safeIdList } from './clinic-search.js';
 import { loadPatientDirectory } from './clinic-directory.js';
 import { anamnesisBody, createDocumentImage } from './document-builder.js';
+import { documentSigningLink, documentWhatsappUrl, documentWhatsappNumber } from './document-whatsapp.js';
 
 const SIGN_FUNCTION = `${SUPABASE_URL}/functions/v1/patient-document-sign`;
 
@@ -46,6 +47,50 @@ function modal(html){
 }
 function closeModal(){ $('#real-modal')?.remove(); }
 
+function documentContactFields(){
+  return `<div class="real-document-contact" data-document-contact>
+    <label>Nome que aparecerá para o paciente<input name="patientSignerName" maxlength="160"></label>
+    <button type="submit" name="delivery" value="whatsapp" class="real-btn whatsapp" data-document-send-whatsapp>Enviar documento pelo WhatsApp</button>
+    <small class="real-help" data-whatsapp-contact role="status"></small>
+    <small class="real-help">O documento será salvo e o WhatsApp abrirá com a mensagem e o link prontos. Toque em enviar na conversa.</small>
+  </div>`;
+}
+
+function bindDocumentContact(form,patients){
+  const contact=$('[data-document-contact]',form),button=$('[data-document-send-whatsapp]',form),hint=$('[data-whatsapp-contact]',form);
+  const update=(resetName=false)=>{
+    const selected=patients.find(patient=>patient.id===form.elements.patient.value);
+    contact.hidden=form.elements.signers.value==='professional';
+    if(resetName||!form.elements.patientSignerName.value)form.elements.patientSignerName.value=selected?.full_name||'';
+    button.disabled=form.dataset.saving==='true'||contact.hidden||!documentWhatsappNumber(selected?.phone);
+    hint.textContent=!selected?'Selecione o paciente para enviar.':!documentWhatsappNumber(selected.phone)?'Cadastre um telefone válido com DDD na ficha deste paciente para enviar pelo WhatsApp.':`Destinatário: ${selected.social_name||selected.full_name} · ${selected.phone}`;
+  };
+  form.elements.patient.addEventListener('change',()=>update(true));
+  form.addEventListener('input',event=>{if(event.target.type==='search')update(true);});
+  form.querySelectorAll('[name="signers"]').forEach(input=>input.addEventListener('change',()=>update()));
+  update();
+  return update;
+}
+
+function reserveWhatsappWindow(){
+  const target=window.open('about:blank','_blank');
+  if(target){target.opener=null;target.document.title='Preparando documento';target.document.body.textContent='Salvando o documento para abrir o WhatsApp…';}
+  return target;
+}
+
+function openPreparedWhatsapp(url,target){
+  if(!url){target?.close();throw new Error('Não foi possível preparar o WhatsApp do paciente. Confira o telefone cadastrado.');}
+  if(target&&!target.closed)target.location.replace(url);
+  else window.location.assign(url);
+}
+
+function documentWhatsappAction(doc){
+  const signer=doc.document_signers?.find(item=>item.signer_type==='patient');
+  if(!signer?.signing_token)return '';
+  const url=documentWhatsappUrl({token:signer.signing_token,phone:doc.patients?.phone,patientName:doc.patients?.social_name||doc.patients?.full_name||doc.patient_name,title:doc.title,signed:signer.status==='signed',pageUrl:location.href});
+  return url?`<a class="real-btn whatsapp small" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Abrir a conversa de ${esc(doc.patients?.full_name)} · ${esc(doc.patients?.phone)}">Enviar pelo WhatsApp</a>`:'<button type="button" class="real-btn ghost small" disabled title="Cadastre um telefone válido com DDD na ficha do paciente">Enviar pelo WhatsApp · sem telefone válido</button>';
+}
+
 async function openUpload(){
     const currentSession=await session();
     if(!currentSession){toast('Entre no painel para enviar documentos.',true);return;}
@@ -65,38 +110,41 @@ async function openUpload(){
           <label class="real-radio"><input type="radio" name="signers" value="patient"><span>Paciente</span></label>
           <label class="real-radio"><input type="radio" name="signers" value="both"><span>Profissional e paciente</span></label>
         </fieldset>
-        <div id="real-patient-contact" hidden>
-          <label>Nome que aparecerá para o paciente<input name="patientSignerName"></label>
-        </div>
-        <div class="real-actions"><button type="button" class="real-btn ghost" data-real-close>Cancelar</button><button class="real-btn primary" id="real-upload-submit">Enviar documento</button></div>
+        ${documentContactFields()}
+        <div class="real-actions"><button type="button" class="real-btn ghost" data-real-close>Cancelar</button><button type="submit" class="real-btn primary" id="real-upload-submit">Salvar documento</button></div>
       </form>`);
-    const form=$('#real-upload-form',m), patientContact=$('#real-patient-contact',m);
-    const selectedPatientName=()=>form.elements.patient.selectedOptions[0]?.dataset.name||'';
-    form.elements.signers.forEach(r=>r.addEventListener('change',()=>{patientContact.hidden=r.value==='professional'; if(!patientContact.hidden && !form.elements.patientSignerName.value) form.elements.patientSignerName.value=selectedPatientName();}));
-    form.elements.patient.addEventListener('change',()=>{if(!patientContact.hidden) form.elements.patientSignerName.value=selectedPatientName();});
+    const form=$('#real-upload-form',m),updateContact=bindDocumentContact(form,patients);
     bindPatientPicker(form.elements.patient,patients);
-    form.addEventListener('submit',uploadDocument);
+    form.addEventListener('submit',e=>uploadDocument(e,updateContact));
 }
 
-async function uploadDocument(e){
+async function uploadDocument(e,updateContact){
   e.preventDefault();
   const form=e.currentTarget, btn=$('#real-upload-submit',form), fd=new FormData(form);
+  if(form.dataset.saving==='true')return;
   const file=form.elements.file.files?.[0];
   if(!file) return;
   if(file.size>20*1024*1024){toast('Arquivo maior que 20 MB.',true);return;}
   if(form.elements.signers.value!=='professional'&&!(/\.(pdf|png|jpe?g)$/i.test(file.name))){toast('Para assinatura do paciente, envie PDF, PNG ou JPG. Converta o DOCX para PDF.',true);return;}
+  const sendWhatsapp=e.submitter?.value==='whatsapp',contact=form.elements.patient.selectedOptions[0]?.dataset||{};
+  if(sendWhatsapp&&(form.elements.signers.value==='professional'||!documentWhatsappNumber(contact.phone))){toast('Escolha a assinatura do paciente e confira o telefone cadastrado.',true);return;}
+  const whatsappWindow=sendWhatsapp?reserveWhatsappWindow():null;
+  form.dataset.saving='true';
+  const submitButtons=form.querySelectorAll('button[type="submit"]');submitButtons.forEach(button=>button.disabled=true);
   btn.disabled=true; btn.textContent='Enviando...';
   try{
     const s=await session(); const p=await profile(); if(!s||!p?.clinic_id) throw new Error('Sessão da clínica não encontrada.');
-    const patientId=String(fd.get('patient')); const patientName=form.elements.patient.selectedOptions[0]?.dataset.name||''; const title=String(fd.get('title')).trim(); const signersMode=String(fd.get('signers'));
-    const contact=form.elements.patient.selectedOptions[0]?.dataset||{};
+    const patientId=String(fd.get('patient')); const patientName=contact.name||''; const title=String(fd.get('title')).trim(); const signersMode=String(fd.get('signers'));
     const {patientToken}=await storeDocument({s,p,patientId,patientName,title,file,signersMode,signerName:String(fd.get('patientSignerName')||patientName),email:contact.email,phone:contact.phone});
-    closeModal(); await refreshDocuments(1);
+    closeModal();
     if(patientToken)showPatientLink(patientToken,title,patientName,contact.phone,contact.email); else toast('Documento preparado para assinatura profissional.');
+    if(sendWhatsapp)openPreparedWhatsapp(documentWhatsappUrl({token:patientToken,phone:contact.phone,patientName:contact.name,title,pageUrl:location.href}),whatsappWindow);
+    refreshDocuments(1).catch(console.error);refreshPatientDocuments().catch(console.error);
   }catch(err){
+    whatsappWindow?.close();
     console.error(err);
     toast(err?.message||'Falha ao enviar documento.',true);
-  }finally{btn.disabled=false;btn.textContent='Enviar documento';}
+  }finally{delete form.dataset.saving;submitButtons.forEach(button=>button.disabled=false);btn.textContent='Salvar documento';updateContact();}
 }
 
 async function storeDocument({s,p,patientId,patientName,title,file,signersMode,signerName,email,phone,accompanied=false,anamnesisId=null}){
@@ -151,36 +199,45 @@ async function openCreateDocument({patientId='',anamnesisId=''}={}){
     <div class="form-grid"><label>Nome do responsável (se houver)<input name="responsibleName" maxlength="160"></label><label>Documento do responsável<input name="responsibleDocument" maxlength="50"></label></div>
     <label class="availability-toggle"><input type="checkbox" name="accompanied"> O preenchimento da anamnese foi acompanhado pela profissional</label>
     <label>Quem assina?<select name="signers"><option value="patient">Paciente</option><option value="both">Paciente e profissional</option><option value="professional">Profissional</option></select></label>
+    ${documentContactFields()}
     <p class="privacy-hint">O documento será criado como imagem com a marca Alegrare e os dados cadastrados. Observações internas não são incluídas. Confira todos os dados antes de gerar.</p>
-    <p role="status" data-create-feedback></p><div class="real-actions"><button type="button" class="real-btn ghost" data-real-close>Cancelar</button><button class="real-btn primary">Criar para assinatura</button></div></form>`);
+    <p role="status" data-create-feedback></p><div class="real-actions"><button type="button" class="real-btn ghost" data-real-close>Cancelar</button><button type="submit" class="real-btn primary">Criar para assinatura</button></div></form>`);
   const form=$('#real-create-form',m),preview=$('[data-patient-preview]',m);
   const showPatient=()=>{const selected=patients.find(x=>x.id===form.elements.patient.value);preview.innerHTML=selected?`<b>${esc(selected.full_name)}</b><p>CPF: ${esc(selected.cpf||'Não informado')} · Nascimento: ${esc(selected.birth_date||'Não informado')}</p><p>Telefone: ${esc(selected.phone||'Não informado')} · E-mail: ${esc(selected.email||'Não informado')}</p><p>Responsável cadastrado: ${esc(selected.source_payload?.PersonInCharge||'Não informado')}</p>`:'<p>Selecione um paciente para conferir os dados.</p>';form.elements.responsibleName.value=selected?.source_payload?.PersonInCharge||'';form.elements.responsibleDocument.value=selected?.source_payload?.PersonInChargeDocument||selected?.source_payload?.PersonInChargeOtherDocument||'';};
   form.elements.patient.onchange=showPatient;showPatient();
+  const updateContact=bindDocumentContact(form,patients);
   if(!anamnesisId)bindPatientPicker(form.elements.patient,patients);
   else form.elements.patient.disabled=true;
-  form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('.primary'),feedback=$('[data-create-feedback]',form);button.disabled=true;feedback.textContent='Gerando e salvando o documento…';
+  form.onsubmit=async e=>{e.preventDefault();if(form.dataset.saving==='true')return;const feedback=$('[data-create-feedback]',form),selected=patients.find(x=>x.id===(anamnesisId?patientId:form.elements.patient.value));
+    const sendWhatsapp=e.submitter?.value==='whatsapp';
+    if(sendWhatsapp&&(form.elements.signers.value==='professional'||!documentWhatsappNumber(selected?.phone))){feedback.textContent='Escolha a assinatura do paciente e confira o telefone cadastrado.';return;}
+    const whatsappWindow=sendWhatsapp?reserveWhatsappWindow():null,submitButtons=form.querySelectorAll('button[type="submit"]');submitButtons.forEach(item=>item.disabled=true);feedback.textContent='Gerando e salvando o documento…';
+    form.dataset.saving='true';
     try{
-      const selected=patients.find(x=>x.id===(anamnesisId?patientId:form.elements.patient.value));if(!selected)throw new Error('Escolha um paciente cadastrado.');
+      if(!selected)throw new Error('Escolha um paciente cadastrado.');
       const responsibleName=form.elements.responsibleName.value.trim(),responsibleDocument=form.elements.responsibleDocument.value.trim();
       if(responsibleDocument&&!responsibleName)throw new Error('Informe o nome do responsável junto do documento.');
-      const title=form.elements.title.value.trim(),file=await createDocumentImage({title,body:form.elements.body.value.trim(),patient:selected,responsibleName,responsibleDocument,professional:professionalName,accompanied:form.elements.accompanied.checked});
-      const {patientToken}=await storeDocument({s,p,patientId:selected.id,patientName:selected.full_name,title,file,signersMode:form.elements.signers.value,signerName:selected.full_name,email:selected.email,phone:selected.phone,accompanied:form.elements.accompanied.checked,anamnesisId:anamnesisId||null});
-      closeModal();await refreshDocuments(1);
-      await refreshPatientDocuments();
+      const title=form.elements.title.value.trim(),signersMode=form.elements.signers.value,signerName=form.elements.patientSignerName.value||selected.full_name,accompanied=form.elements.accompanied.checked;
+      const file=await createDocumentImage({title,body:form.elements.body.value.trim(),patient:selected,responsibleName,responsibleDocument,professional:professionalName,accompanied});
+      const {patientToken}=await storeDocument({s,p,patientId:selected.id,patientName:selected.full_name,title,file,signersMode,signerName,email:selected.email,phone:selected.phone,accompanied,anamnesisId:anamnesisId||null});
+      closeModal();
       if(patientToken)showPatientLink(patientToken,title,selected.full_name,selected.phone,selected.email);else toast('Documento preparado para assinatura profissional.');
-    }catch(error){feedback.textContent=error.message||'Não foi possível criar o documento.';button.disabled=false;}
+      if(sendWhatsapp)openPreparedWhatsapp(documentWhatsappUrl({token:patientToken,phone:selected.phone,patientName:selected.social_name||selected.full_name,title,pageUrl:location.href}),whatsappWindow);
+      refreshDocuments(1).catch(console.error);refreshPatientDocuments().catch(console.error);
+    }catch(error){whatsappWindow?.close();feedback.textContent=error.message||'Não foi possível criar o documento.';}
+    finally{delete form.dataset.saving;submitButtons.forEach(item=>item.disabled=false);updateContact();}
   };
 }
 
-function patientLink(token){ return `${location.origin}${location.pathname}#/assinar/${token}`; }
+function patientLink(token){ return documentSigningLink(token,location.href); }
 function showPatientLink(token,title,patient,phone,email){
   const link=patientLink(token);
-  const digits=String(phone||'').replace(/\D/g,'');const number=digits.length===10||digits.length===11?`55${digits}`:digits;
+  const number=documentWhatsappNumber(phone),whatsappUrl=documentWhatsappUrl({token,phone,patientName:patient,title,pageUrl:location.href});
   const message=`Olá! A Alegrare disponibilizou um documento para sua leitura e assinatura. Acesse seu link individual: ${link}`;
   const encoded=encodeURIComponent(message);
   const m=modal(`
     <div class="real-modal-head"><div><small>LINK DO PACIENTE</small><h2>Documento pronto</h2><p>${esc(patient)} pode abrir e assinar sem acessar o painel.</p></div><button data-real-close>×</button></div>
-    <div class="real-success"><b>${esc(title)}</b><label>Link de assinatura<div class="real-copy"><input readonly value="${esc(link)}"><button class="real-btn primary" id="real-copy-link">Copiar link</button></div></label><p>O arquivo permanece privado no Storage. O link libera acesso temporário somente após validar o token de assinatura.</p><p class="privacy-hint">Confira o destinatário antes de abrir o aplicativo de mensagens. Nenhuma mensagem é enviada automaticamente.</p><div class="consultation-actions">${/^55\d{10,11}$/.test(number)?`<a class="real-btn ghost" target="_blank" rel="noopener noreferrer" href="https://wa.me/${number}?text=${encoded}">Abrir WhatsApp</a><a class="real-btn ghost" href="sms:+${number}?body=${encoded}">Abrir SMS</a>`:''}${email?`<a class="real-btn ghost" href="mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('Documento Alegrare para assinatura')}&body=${encoded}">Abrir e-mail</a>`:''}</div></div>`);
+    <div class="real-success"><b>${esc(title)}</b><label>Link de assinatura<div class="real-copy"><input readonly value="${esc(link)}"><button class="real-btn primary" id="real-copy-link">Copiar link</button></div></label><p>O arquivo permanece privado no Storage. O link libera acesso temporário somente após validar o token de assinatura.</p><p class="privacy-hint">Confira o destinatário antes de abrir o aplicativo de mensagens. Nenhuma mensagem é enviada automaticamente.</p><div class="consultation-actions">${whatsappUrl?`<a class="real-btn whatsapp" target="_blank" rel="noopener noreferrer" href="${esc(whatsappUrl)}">Enviar pelo WhatsApp</a><a class="real-btn ghost" href="sms:+${number}?body=${encoded}">Abrir SMS</a>`:'<p>Cadastre um telefone válido com DDD na ficha do paciente para enviar pelo WhatsApp.</p>'}${email?`<a class="real-btn ghost" href="mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('Documento Alegrare para assinatura')}&body=${encoded}">Abrir e-mail</a>`:''}</div></div>`);
   $('#real-copy-link',m).addEventListener('click',async()=>{await navigator.clipboard.writeText(link);toast('Link copiado.');});
 }
 
@@ -203,7 +260,7 @@ async function refreshDocuments(page=documentPage){
   if(!s){host.innerHTML='<div class="real-empty"><p>Entre no painel para ver os documentos.</p></div>';return;}
   const p=await profile();
   const from=(page-1)*DOCUMENT_PAGE_SIZE,to=from+DOCUMENT_PAGE_SIZE-1;
-  let query=supabase.from('documents').select('id,title,patient_name,file_name,file_path,mime_type,status,created_at,document_signers(id,signer_type,signer_user_id,signer_name,signer_email,signer_phone,status,signing_token,signed_at,updated_at,metadata)',{count:'exact'}).eq('clinic_id',p.clinic_id);
+  let query=supabase.from('documents').select('id,patient_id,title,patient_name,file_name,file_path,mime_type,status,created_at,patients(full_name,social_name,phone),document_signers(id,signer_type,signer_user_id,signer_name,signer_email,signer_phone,status,signing_token,signed_at,updated_at,metadata)',{count:'exact'}).eq('clinic_id',p.clinic_id);
   if(documentTerm.trim()){const pattern=searchPattern(documentTerm);const {data:patientMatches,error:patientError}=await supabase.from('patients').select('id').eq('clinic_id',p.clinic_id).or(`full_name.ilike.${pattern},social_name.ilike.${pattern},phone.ilike.${pattern}`).limit(500);if(patientError||patientMatches?.length===500){host.removeAttribute('aria-busy');if(feedback)feedback.textContent=patientError?'Não foi possível buscar os pacientes dos documentos.':'Há muitos pacientes correspondentes. Refine o nome ou telefone.';return;}const ids=safeIdList((patientMatches||[]).map(p=>p.id));query=query.or(`title.ilike.${pattern},patient_name.ilike.${pattern},file_name.ilike.${pattern}`+(ids.length?`,patient_id.in.(${ids.join(',')})`:''));}
   if(documentStatus)query=query.eq('status',documentStatus);
   const {data,error,count}=await query.order('created_at',{ascending:false}).order('id').range(from,to);
@@ -218,7 +275,7 @@ async function refreshDocuments(page=documentPage){
     const patient=doc.document_signers?.find(x=>x.signer_type==='patient');
     const professional=doc.document_signers?.find(x=>x.signer_type==='professional');
     const labels=[]; if(professional) labels.push(`Profissional: ${professional.status==='signed'?'assinado':'pendente'}`); if(patient) labels.push(`Paciente: ${patient.status==='signed'?'assinado':'pendente'}`);
-    return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">${esc((doc.file_name||'Arquivo').split('.').pop().toUpperCase().slice(0,5))}</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions"><button class="real-btn ghost small" data-doc-open="${doc.id}">Original</button>${patient?.metadata?.signed_copy_path?`<button class="real-btn primary small" data-doc-signed="${doc.id}">Ver termo assinado</button>`:''}<button class="real-btn ghost small" data-doc-details="${doc.id}">Assinaturas</button>${professional?.status==='pending'&&professional.signer_user_id===p.id?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
+    return `<article class="real-doc-row"><div class="real-doc-main"><span class="real-file-icon">${esc((doc.file_name||'Arquivo').split('.').pop().toUpperCase().slice(0,5))}</span><span><b>${esc(doc.title)}</b><small>${esc(doc.patient_name)} · ${esc(doc.file_name)}</small><em>${labels.join(' · ')}</em></span></div><div class="real-doc-actions">${documentWhatsappAction(doc)}<button class="real-btn ghost small" data-doc-open="${doc.id}">Original</button>${patient?.metadata?.signed_copy_path?`<button class="real-btn primary small" data-doc-signed="${doc.id}">Ver termo assinado</button>`:''}<button class="real-btn ghost small" data-doc-details="${doc.id}">Assinaturas</button>${professional?.status==='pending'&&professional.signer_user_id===p.id?`<button class="real-btn small" data-prof-sign="${professional.id}">Assinar</button>`:''}${patient?.status==='pending'?`<button class="real-btn ghost small" data-copy-token="${patient.signing_token}">Copiar link</button>`:''}<span class="real-status ${doc.status}">${doc.status==='signed'?'Assinado':'Pendente'}</span></div></article>`;
   }).join('')}${documentsPagination()}`;
   host.querySelectorAll('[data-doc-open]').forEach(b=>b.onclick=()=>openDocument(data.find(doc=>doc.id===b.dataset.docOpen)));
   host.querySelectorAll('[data-doc-signed]').forEach(b=>b.onclick=()=>openDocument(data.find(doc=>doc.id===b.dataset.docSigned),true));
@@ -243,7 +300,7 @@ function openDocumentDetails(doc){
     <p><b>Assinatura do paciente:</b> ${signer?.signed_at?`${esc(signer.signer_name)} · ${esc(fmtDate(signer.signed_at))}`:'Pendente'}</p><p><b>Localidade declarada pelo paciente:</b> ${esc(meta.signer_location||'Não informada')}</p>
     <p><b>Assinatura profissional:</b> ${professional?.signed_at?esc(fmtDate(professional.signed_at)):(professional?'Pendente':'Não solicitada')}</p>
     <p class="privacy-hint">Envio e recebimento são confirmações manuais da equipe. A assinatura guarda aceite, data e dados técnicos de auditoria; localidade é declarada pelo paciente.</p>
-    <div class="consultation-actions">${meta.signed_copy_path?'<button class="real-btn primary" data-details-signed>Visualizar / baixar termo assinado</button>':''}<a class="real-btn ghost" href="${esc(email)}">Preparar e-mail para Danielle</a>${signer&&!meta.sent_at?'<button class="real-btn ghost" data-record-sent>Registrar envio do link</button>':''}${signer&&!meta.received_at?'<button class="real-btn ghost" data-record-received>Registrar recebimento informado</button>':''}</div><p role="status" data-delivery-feedback></p></div>`);
+    <div class="consultation-actions">${documentWhatsappAction(doc)}${meta.signed_copy_path?'<button class="real-btn primary" data-details-signed>Visualizar / baixar termo assinado</button>':''}<a class="real-btn ghost" href="${esc(email)}">Preparar e-mail para Danielle</a>${signer&&!meta.sent_at?'<button class="real-btn ghost" data-record-sent>Registrar envio do link</button>':''}${signer&&!meta.received_at?'<button class="real-btn ghost" data-record-received>Registrar recebimento informado</button>':''}</div><p role="status" data-delivery-feedback></p></div>`);
   m.querySelector('[data-details-signed]')?.addEventListener('click',()=>openDocument(doc,true));
   for(const [selector,key] of [['[data-record-sent]','sent'],['[data-record-received]','received']]){
     m.querySelector(selector)?.addEventListener('click',async e=>{
@@ -276,11 +333,11 @@ async function refreshPatientDocuments(){
   host.dataset.loading='true';host.textContent='Carregando documentos…';
   try{
     const p=await profile();if(!p?.clinic_id)throw new Error('Entre no painel para consultar documentos.');
-    const {data,error}=await supabase.from('documents').select('id,title,patient_name,file_name,file_path,mime_type,status,created_at,document_signers(id,signer_type,signer_user_id,signer_name,signer_email,status,signing_token,signed_at,updated_at,metadata)').eq('clinic_id',p.clinic_id).eq('patient_id',patientId).order('created_at',{ascending:false}).limit(30);
+    const {data,error}=await supabase.from('documents').select('id,patient_id,title,patient_name,file_name,file_path,mime_type,status,created_at,patients(full_name,social_name,phone),document_signers(id,signer_type,signer_user_id,signer_name,signer_email,status,signing_token,signed_at,updated_at,metadata)').eq('clinic_id',p.clinic_id).eq('patient_id',patientId).order('created_at',{ascending:false}).limit(30);
     if(error)throw error;if(!host.isConnected||host.dataset.patientId!==patientId)return;
     host.innerHTML=data?.length?data.map(doc=>{
       const patient=doc.document_signers?.find(s=>s.signer_type==='patient'),professional=doc.document_signers?.find(s=>s.signer_type==='professional');
-      return `<article class="patient-document-row"><div><b>${esc(doc.title)}</b><small>${esc(fmtDate(doc.created_at))} · ${patient?`Paciente: ${patient.status==='signed'?'assinado':'aguardando'}`:'Sem assinatura do paciente'} · ${professional?`Profissional: ${professional.status==='signed'?'assinado':'aguardando'}`:'Profissional não solicitada'}</small></div><div class="consultation-actions"><button type="button" class="real-btn ghost small" data-patient-document-details="${doc.id}">Assinaturas</button>${patient?.metadata?.signed_copy_path?`<button type="button" class="real-btn primary small" data-patient-document-signed="${doc.id}">Ver termo assinado</button>`:''}${patient?.status==='pending'?`<button type="button" class="real-btn ghost small" data-patient-document-link="${doc.id}">Copiar link</button>`:''}</div></article>`;
+      return `<article class="patient-document-row"><div><b>${esc(doc.title)}</b><small>${esc(fmtDate(doc.created_at))} · ${patient?`Paciente: ${patient.status==='signed'?'assinado':'aguardando'}`:'Sem assinatura do paciente'} · ${professional?`Profissional: ${professional.status==='signed'?'assinado':'aguardando'}`:'Profissional não solicitada'}</small></div><div class="consultation-actions">${documentWhatsappAction(doc)}<button type="button" class="real-btn ghost small" data-patient-document-details="${doc.id}">Assinaturas</button>${patient?.metadata?.signed_copy_path?`<button type="button" class="real-btn primary small" data-patient-document-signed="${doc.id}">Ver termo assinado</button>`:''}${patient?.status==='pending'?`<button type="button" class="real-btn ghost small" data-patient-document-link="${doc.id}">Copiar link</button>`:''}</div></article>`;
     }).join(''):'<p class="empty">Nenhum documento deste paciente.</p>';
     host.querySelectorAll('[data-patient-document-details]').forEach(button=>button.onclick=()=>openDocumentDetails(data.find(doc=>doc.id===button.dataset.patientDocumentDetails)));
     host.querySelectorAll('[data-patient-document-signed]').forEach(button=>button.onclick=()=>openDocument(data.find(doc=>doc.id===button.dataset.patientDocumentSigned),true));
@@ -362,3 +419,4 @@ window.addEventListener('alegrare:upload-document',openUpload);
 window.addEventListener('alegrare:create-anamnesis-document',e=>openCreateDocument(e.detail||{}));
 supabase.auth.onAuthStateChange(()=>{cachedProfile=null;setTimeout(refreshDocuments,0);});
 if(!(await renderPatientSigning())){injectClinicUI();injectPatientDocuments();}
+
