@@ -36,13 +36,13 @@ export class StockAlertPanel {
         .stock-overview-grid a.warning{background:#fff9ee;border-color:#efdab0}.stock-overview-grid a.danger{background:#fff4f2;border-color:#efc6bf}
         .stock-overview-items{display:grid;gap:9px;margin:12px 0}.stock-overview-items p{display:grid;gap:4px;font-size:13px;margin:0}.stock-overview-items small{color:#7d5644;font-size:11px}
         @media(max-width:600px){.stock-overview-grid{grid-template-columns:1fr}.stock-overview-grid a{grid-template-columns:36px 1fr;align-items:center}}
-      </style><div class="card-title"><div><h2>Estoque e validade</h2></div><a class="link" href="#/catalog/stock">Ver estoque</a></div>
+      </style><div class="card-title"><div><h2>Alertas de produtos e medicamentos</h2></div><a class="link" href="#/catalog/stock">Ver estoque</a></div>
         <div class="stock-overview-grid">
-          ${[['replenish', 'Precisam de reposição', 'warning'], ['expired', 'Lotes vencidos', 'danger'], ['expiring', 'Vencem em até 30 dias', 'warning']].map(([key, label, tone]) => `<a href="#/catalog/stock/${key}" class="${counts[key] ? tone : ''}"><strong>${counts[key]}</strong><span>${label}</span></a>`).join('')}
+          ${[['replenish', 'Estoque baixo ou zerado', 'warning'], ['expired', 'Lotes vencidos', 'danger'], ['expiring', 'Vencem em até 30 dias', 'warning']].map(([key, label, tone]) => `<a href="#/catalog/stock/${key}" class="${counts[key] ? tone : ''}"><strong>${counts[key]}</strong><span>${label}</span></a>`).join('')}
         </div>
         ${flagged.length ? `<div class="stock-overview-items">${flagged.slice(0, 3).map(row => `<p><b>${escape(row.name)}${row.lot_code ? ` · Lote ${escape(row.lot_code)}` : ''}</b><small>${escape(stockAlertLabels(row, today).map(label => label.text).join(' · '))}</small></p>`).join('')}</div>${flagged.length > 3 ? `<p class="search-feedback">Mais ${flagged.length - 3} item(ns) com avisos no estoque.</p>` : ''}`
           : `<p class="search-feedback">${rows.length ? 'Nenhum aviso de reposição ou validade no momento.' : 'Cadastre quantidades, estoque mínimo e validade para acompanhar os avisos.'}</p>`}
-        <p class="search-feedback">Avisos de validade consideram os lotes com quantidade em estoque.</p>`;
+        <p class="search-feedback">O controle inclui medicamentos, produtos, insumos, materiais e limpeza. A validade considera os lotes com quantidade em estoque.</p>`;
     } catch (error) {
       if (!this.disposed && this.host.isConnected) {
         this.host.innerHTML = '<div class="card-title"><h2>Estoque e validade</h2><a class="link" href="#/catalog/stock">Abrir estoque</a></div><p class="search-feedback" role="status">Não foi possível carregar os avisos. <button class="link" type="button" data-retry-stock>Tentar novamente</button></p>';

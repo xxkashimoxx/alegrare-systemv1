@@ -1,6 +1,6 @@
 import { supabase } from './supabase-client.js';
 
-export const STOCK_FIELDS = 'id,name,category,unit,quantity,minimum_quantity,lot_code,supplier,expires_on,unit_price';
+export const STOCK_FIELDS = 'id,name,category,unit,quantity,minimum_quantity,lot_code,supplier,purchased_on,expires_on,unit_price,product_code,invoice_key,invoice_item_number,invoice_source_name';
 
 export async function loadClinicStock(clinicId) {
   const rows = [], pageSize = 500;

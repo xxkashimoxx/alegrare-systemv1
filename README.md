@@ -13,6 +13,8 @@ A aplicação usa a versão conectada ao Supabase, com:
 - documentos privados e assinaturas;
 - notas fiscais;
 - persistência no Supabase com RLS.
+- importação de itens de estoque por NF-e (XML), CSV ou DANFE PDF, com conferência antes de gravar;
+- alertas de estoque baixo/zerado e validade para medicamentos, produtos, insumos, materiais e limpeza.
 
 A aplicação não usa dados fictícios nem `localStorage` como banco de dados.
 
@@ -51,3 +53,4 @@ node tests/record-queries.test.mjs
 ```
 
 Os testes usam dados fictícios e consultas simuladas. A verificação autenticada em produção depende de uma sessão válida no painel. Despesas, integração fiscal municipal e conciliação bancária automática não estão conectadas.
+
