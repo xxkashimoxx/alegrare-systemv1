@@ -1,6 +1,7 @@
 import { supabase } from './supabase-client.js';
 import { STOCK_FIELDS, loadClinicStock } from './stock-store.js';
 import { clinicDay, stockSummary, matchesStockAlert, stockAlertLabels, stockDateLabel, stockNumber } from './stock-alerts.js';
+import { InvoiceImport } from './invoice-import.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
 const categoryNames = { product:'Produto', supply:'Insumo', cleaning:'Limpeza', material:'Material', medication:'Medicamento' };
@@ -12,7 +13,7 @@ export class CatalogManager {
     this.type=initialType==='stock'?'stock':'medication';
     this.filter='all'; this.alertFilter=['replenish','expired','expiring'].includes(initialAlert)?initialAlert:'all';
     this.term=''; this.rows=[]; this.busy=false; this.loading=false; this.ready=false;
-    this.requestVersion=0; this.disposed=false; this.editId=null;
+    this.requestVersion=0; this.disposed=false; this.editId=null; this.invoiceImport=null;
     this.onVisibility=()=>{if(!document.hidden&&!this.editId)this.load();};
   }
 
@@ -24,6 +25,7 @@ export class CatalogManager {
       .catalog-intro{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}.catalog-intro h2{font:700 19px Manrope,Arial,sans-serif;margin:0 0 6px}.catalog-intro p{color:var(--cat-muted);font-size:13px;line-height:1.5;margin:0}
       .catalog-tabs,.catalog-filters{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.catalog-tabs button,.catalog-filters button{border:1px solid #d7e2e8;background:#fff;color:#49606e;border-radius:9px;padding:9px 12px;font:700 12px Inter,Arial,sans-serif;cursor:pointer}.catalog-tabs button.active,.catalog-filters button.active{background:#eaf4f9;border-color:#b8d8e8;color:#205f80}.catalog-manager button:disabled{opacity:.6;cursor:wait}
       .catalog-form{display:grid;gap:13px;padding:17px;border:1px solid #e1e9ed;border-radius:13px;background:#fbfdfe;margin:12px 0 20px}.catalog-form h3{font:700 15px Manrope,Arial,sans-serif;margin:0}.catalog-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.catalog-form label{display:grid;gap:6px;font-size:12px;font-weight:700;color:#526975;min-width:0}
+      .catalog-form-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.catalog-import{border:1px solid #a9cddd;border-radius:9px;background:#fff;color:#236b8e;padding:9px 12px;font-weight:700;cursor:pointer}
       .catalog-form input,.catalog-form select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #d6e2e8;border-radius:9px;background:#fff;padding:9px 11px;font:13px Inter,Arial,sans-serif;color:var(--cat-ink)}.catalog-form input:focus,.catalog-form select:focus,.catalog-search input:focus,.catalog-manager button:focus-visible{outline:3px solid #2680b326;border-color:var(--cat-blue)}
       .catalog-submit{justify-self:start;border:0;border-radius:9px;background:var(--cat-blue);color:#fff;padding:11px 16px;font-weight:700;cursor:pointer}.catalog-hint{margin:0;font-size:11px;line-height:1.5;color:#617480}.catalog-feedback{min-height:18px;margin:0;color:#526975;font-size:12px}.catalog-feedback.error{color:#a33f36}.catalog-feedback.success{color:#26734a}
       .catalog-list-head{display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 9px}.catalog-list-head h3{font:700 16px Manrope,Arial,sans-serif;margin:0}.catalog-search{display:grid;gap:5px;font-size:11px;color:#5b717e;min-width:min(300px,100%)}.catalog-search input{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #d6e2e8;border-radius:9px}
@@ -46,6 +48,7 @@ export class CatalogManager {
     this.host.querySelector('[data-refresh]').onclick=()=>this.load();
     this.host.querySelector('#catalog-medication-form')?.addEventListener('submit',event=>this.saveMedication(event));
     this.host.querySelector('#catalog-stock-form')?.addEventListener('submit',event=>this.saveStock(event));
+    const invoiceButton=this.host.querySelector('[data-import-invoice]');if(invoiceButton)invoiceButton.onclick=()=>this.openInvoiceImport();
     this.host.querySelector('[data-list]').addEventListener('click',event=>{const button=event.target.closest('[data-edit-stock], [data-cancel-stock]');if(!button||this.busy||this.loading)return;this.editId=button.hasAttribute('data-cancel-stock')?null:button.dataset.editStock;this.paintRows();if(this.editId)this.host.querySelector('[data-stock-edit] input')?.focus();});
     this.host.querySelector('[data-list]').addEventListener('submit',event=>{if(event.target.matches('[data-stock-edit]'))this.saveStockUpdate(event);});
     this.paintAlerts();this.paintRows();this.setControls();
@@ -62,7 +65,14 @@ export class CatalogManager {
   }
 
   stockForm() {
-    return `<form class="catalog-form" id="catalog-stock-form"><h3>Novo item em estoque</h3><div class="catalog-grid"><label>Nome do item<input name="name" required minlength="2" maxlength="160" placeholder="Luvas, desinfetante, medicamento…"></label><label>Tipo<select name="category" required>${Object.entries(categoryNames).map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}</select></label></div><div class="catalog-grid"><label>Unidade de controle<input name="unit" required maxlength="30" value="un" placeholder="un, caixa, frasco, litro"></label><label>Fornecedor<input name="supplier" maxlength="160" placeholder="Opcional"></label></div><div class="catalog-grid"><label>Quantidade atual<input name="quantity" type="number" min="0" step="0.01" value="0" required></label><label>Estoque mínimo<input name="minimum_quantity" type="number" min="0" step="0.01" value="0" required></label></div><div class="catalog-grid"><label>Lote<input name="lot_code" maxlength="120" placeholder="Opcional"></label><label>Validade<input name="expires_on" type="date"></label></div><div class="catalog-grid"><label>Valor unitário (R$)<input name="unit_price" type="number" min="0" step="0.01" placeholder="Opcional"></label><label>Data da compra<input name="purchased_on" type="date"></label></div><p class="catalog-hint">O aviso de reposição aparece quando a quantidade chega ao mínimo. Para lotes com saldo, a validade é avisada com 30 dias de antecedência.</p><button type="submit" class="catalog-submit" data-label="Cadastrar item">Cadastrar item</button></form>`;
+    return `<form class="catalog-form" id="catalog-stock-form"><div class="catalog-form-title"><h3>Novo item em estoque</h3><button type="button" class="catalog-import" data-import-invoice>Importar nota fiscal</button></div><p class="catalog-hint">Use a nota fiscal para ler dezenas de produtos e medicamentos de uma vez, ou cadastre um item manualmente abaixo.</p><div class="catalog-grid"><label>Nome do item<input name="name" required minlength="2" maxlength="160" placeholder="Luvas, desinfetante, medicamento…"></label><label>Tipo<select name="category" required>${Object.entries(categoryNames).map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}</select></label></div><div class="catalog-grid"><label>Unidade de controle<input name="unit" required maxlength="30" value="un" placeholder="un, caixa, frasco, litro"></label><label>Fornecedor<input name="supplier" maxlength="160" placeholder="Opcional"></label></div><div class="catalog-grid"><label>Quantidade atual<input name="quantity" type="number" min="0" step="0.01" value="0" required></label><label>Estoque mínimo<input name="minimum_quantity" type="number" min="0" step="0.01" value="0" required></label></div><div class="catalog-grid"><label>Lote<input name="lot_code" maxlength="120" placeholder="Opcional"></label><label>Validade<input name="expires_on" type="date"></label></div><div class="catalog-grid"><label>Valor unitário (R$)<input name="unit_price" type="number" min="0" step="0.01" placeholder="Opcional"></label><label>Data da compra<input name="purchased_on" type="date"></label></div><p class="catalog-hint">O aviso de fim de estoque aparece quando a quantidade chega a zero ou ao mínimo. Medicamentos e produtos com saldo recebem aviso de validade com 30 dias de antecedência.</p><button type="submit" class="catalog-submit" data-label="Cadastrar item">Cadastrar item</button></form>`;
+  }
+
+  openInvoiceImport() {
+    if(this.busy||this.loading||!this.ready)return;
+    this.invoiceImport?.destroy();
+    this.invoiceImport=new InvoiceImport({clinicId:this.clinicId,profileId:this.profileId,onImported:async()=>{if(!this.disposed)await this.load();}});
+    this.invoiceImport.open();
   }
 
   async load() {
@@ -82,7 +92,7 @@ export class CatalogManager {
     const host=this.host?.querySelector('[data-alerts]');if(!host)return;
     if(!this.ready){host.innerHTML='<p class="catalog-hint">Carregue o estoque para consultar os avisos.</p>';return;}
     const counts=stockSummary(this.rows);
-    host.innerHTML=`<h3>Avisos de estoque e validade</h3><div class="catalog-alert-grid">${[['replenish','Precisam de reposição','warning'],['expired','Lotes vencidos','danger'],['expiring','Vencem em até 30 dias','warning']].map(([key,label,tone])=>`<button type="button" data-alert-filter="${key}" aria-pressed="${this.alertFilter===key}" class="${counts[key]?tone:''} ${this.alertFilter===key?'active':''}"><strong>${counts[key]}</strong><span>${label}</span></button>`).join('')}</div><p class="catalog-hint">${counts.total?`${counts.total} item(ns) com avisos. Selecione um aviso para filtrar a lista.`:'Nenhum aviso no momento.'} Validade considera apenas lotes com saldo em estoque.</p>${this.alertFilter!=='all'?'<button class="catalog-refresh" type="button" data-alert-filter="all">Mostrar todos os avisos e itens</button>':''}`;
+    host.innerHTML=`<h3>Alertas de produtos e medicamentos</h3><div class="catalog-alert-grid">${[['replenish','Estoque baixo ou zerado','warning'],['expired','Lotes vencidos','danger'],['expiring','Vencem em até 30 dias','warning']].map(([key,label,tone])=>`<button type="button" data-alert-filter="${key}" aria-pressed="${this.alertFilter===key}" class="${counts[key]?tone:''} ${this.alertFilter===key?'active':''}"><strong>${counts[key]}</strong><span>${label}</span></button>`).join('')}</div><p class="catalog-hint">${counts.total?`${counts.total} item(ns) com alertas. Selecione um alerta para filtrar a lista.`:'Nenhum alerta no momento.'} O controle inclui medicamentos, produtos, insumos, materiais e limpeza; validade considera lotes com saldo.</p>${this.alertFilter!=='all'?'<button class="catalog-refresh" type="button" data-alert-filter="all">Mostrar todos os alertas e itens</button>':''}`;
     host.querySelectorAll('[data-alert-filter]').forEach(button=>button.onclick=()=>{if(this.busy)return;this.alertFilter=this.alertFilter===button.dataset.alertFilter?'all':button.dataset.alertFilter;this.editId=null;this.paintAlerts();this.paintRows();});
   }
 
@@ -108,7 +118,7 @@ export class CatalogManager {
 
   setControls() {
     if(!this.host||this.disposed)return;
-    this.host.querySelectorAll('[data-type], [data-filter], [data-alert-filter], [data-cancel-stock]').forEach(button=>button.disabled=this.busy);
+    this.host.querySelectorAll('[data-type], [data-filter], [data-alert-filter], [data-cancel-stock], [data-import-invoice]').forEach(button=>button.disabled=this.busy||this.loading);
     this.host.querySelectorAll('[data-refresh], [data-edit-stock]').forEach(button=>button.disabled=this.busy||this.loading||!this.ready&&button.hasAttribute('data-edit-stock'));
     this.host.querySelectorAll('.catalog-submit').forEach(button=>{button.disabled=this.busy||this.loading||!this.ready;button.textContent=this.busy?'Salvando…':button.dataset.label;});
     const search=this.host.querySelector('[data-search]');if(search)search.disabled=this.busy;
@@ -154,5 +164,5 @@ export class CatalogManager {
   }
 
   showFeedback(message,error=false) {const feedback=this.host?.querySelector('[data-feedback]');if(feedback){feedback.textContent=message;feedback.className=`catalog-feedback ${error?'error':'success'}`;}}
-  destroy() {this.disposed=true;this.requestVersion++;document.removeEventListener('visibilitychange',this.onVisibility);}
+  destroy() {this.disposed=true;this.requestVersion++;this.invoiceImport?.destroy();this.invoiceImport=null;document.removeEventListener('visibilitychange',this.onVisibility);}
 }
